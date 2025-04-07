@@ -67,7 +67,7 @@ func TestSingleDisk(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "disk0", diskName)
 	require.Equal(t, "disk0s2", partitionName)
-	require.Equal(t, int64(0), diskSizeUnused)
+	require.EqualValues(t, 5368709120, diskSizeUnused)
 }
 
 func TestSingleDiskWithRecoveryPartition(t *testing.T) {
@@ -142,7 +142,7 @@ func TestSingleDiskWithRecoveryPartition(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "disk0", diskName)
 	require.Equal(t, "disk0s2", partitionName)
-	require.Equal(t, int64(0), diskSizeUnused)
+	require.EqualValues(t, 37888, diskSizeUnused)
 }
 
 func TestMultipleDisks(t *testing.T) {
