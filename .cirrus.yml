@@ -4,7 +4,7 @@ task:
   container:
     image: golang:latest
 
-  script: go test -v ./...
+  test_script: go test -v ./...
 
 task:
   name: Test (macOS)
@@ -12,7 +12,8 @@ task:
   macos_instance:
     image: ghcr.io/cirruslabs/macos-runner:sequoia
 
-  script: go test -v ./...
+  prepare_script: brew install go
+  test_script: go test -v ./...
 
 task:
   name: Release (Dry Run)
