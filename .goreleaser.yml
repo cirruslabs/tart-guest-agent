@@ -39,8 +39,6 @@ brews:
     license: FSL-1.1-Apache-2.0
     description: Guest agent for Tart VMs
     skip_upload: auto
-    install: |
-      bin.install "tart-guest-agent"
 
 nfpms:
   - package_name: tart-guest-agent
