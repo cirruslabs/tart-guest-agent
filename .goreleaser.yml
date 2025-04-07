@@ -30,6 +30,8 @@ release:
 
 brews:
   - name: tart-guest-agent
+    ids:
+      - binary
     repository:
       owner: cirruslabs
       name: homebrew-cli
