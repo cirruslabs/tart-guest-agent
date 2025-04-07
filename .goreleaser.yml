@@ -1,0 +1,43 @@
+project_name: tart-guest-agent
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - main: cmd/main.go
+    ldflags: >
+      -X github.com/cirruslabs/tart-guest-agent/internal/version.Version={{.Version}}
+      -X github.com/cirruslabs/tart-guest-agent/internal/version.Commit={{.ShortCommit}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: binary
+    format: binary
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+  - id: regular
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+
+release:
+  prerelease: auto
+
+nfpms:
+  - package_name: tart-guest-agent
+    vendor: Cirrus Labs, Inc.
+    homepage: https://github.com/cirruslabs/tart-guest-agent
+    maintainer: support@cirruslabs.org
+    description: Guest agent for Tart VMs
+    section: misc
+    formats:
+      - deb
+      - rpm
+
+furies:
+  - account: cirruslabs
