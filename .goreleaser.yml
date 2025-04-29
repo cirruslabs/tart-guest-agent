@@ -5,14 +5,27 @@ before:
     - go mod download
 
 builds:
-  - main: cmd/main.go
+  - id: darwin
+    main: cmd/main.go
+    ldflags: >
+      -X github.com/cirruslabs/tart-guest-agent/internal/version.Version={{.Version}}
+      -X github.com/cirruslabs/tart-guest-agent/internal/version.Commit={{.ShortCommit}}
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  - id: linux
+    main: cmd/main.go
     ldflags: >
       -X github.com/cirruslabs/tart-guest-agent/internal/version.Version={{.Version}}
       -X github.com/cirruslabs/tart-guest-agent/internal/version.Commit={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
     goos:
-      - darwin
       - linux
     goarch:
       - amd64
