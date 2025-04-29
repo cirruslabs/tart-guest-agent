@@ -63,7 +63,7 @@ func run(cmd *cobra.Command, args []string) error {
 				zap.S().Warnf("failed to resize disk: %v", err)
 			}
 		} else {
-			zap.S().Infof("sucessfully resized the disk")
+			zap.S().Infof("successfully resized the disk")
 		}
 	}
 
