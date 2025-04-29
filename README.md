@@ -4,4 +4,5 @@ A guest agent for Tart VMS is a lightweight background service that runs inside 
 
 Currently implemented features:
 
-* Automatic disk resizing for macOS VMs with recovery partition removed
+* Automatic disk resizing for macOS VMs with recovery partition removed (`--resize-disk`)
+* Clipboard sharing for macOS VMs using our in-house SPICE vdagent implementation (`--run-vdagent`)
