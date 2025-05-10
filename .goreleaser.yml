@@ -1,3 +1,5 @@
+---
+version: 2
 project_name: tart-guest-agent
 
 before:
@@ -7,44 +9,47 @@ before:
 builds:
   - id: darwin
     main: cmd/main.go
-    ldflags: >
+    flags: >-
+      -trimpath
+    ldflags: >-
+      -s -w
       -X github.com/cirruslabs/tart-guest-agent/internal/version.Version={{.Version}}
       -X github.com/cirruslabs/tart-guest-agent/internal/version.Commit={{.ShortCommit}}
     env:
       - CGO_ENABLED=1
-    goos:
-      - darwin
-    goarch:
-      - amd64
-      - arm64
+    targets:
+      - darwin_amd64
+      - darwin_arm64
 
   - id: linux
     main: cmd/main.go
-    ldflags: >
+    flags: >-
+      -trimpath
+    ldflags: >-
+      -s -w
       -X github.com/cirruslabs/tart-guest-agent/internal/version.Version={{.Version}}
       -X github.com/cirruslabs/tart-guest-agent/internal/version.Commit={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-    goarch:
-      - amd64
-      - arm64
+    targets:
+      - linux_amd64
+      - linux_arm64
+
+universal_binaries:
+  - replace: true
+    ids:
+      - darwin
 
 archives:
-  - id: binary
-    format: binary
-    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
-  - id: regular
-    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+  - name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - tar.gz
 
 release:
   prerelease: auto
 
 brews:
-  - name: tart-guest-agent
-    ids:
-      - binary
+  - name: "{{ .ProjectName }}"
     repository:
       owner: cirruslabs
       name: homebrew-cli
@@ -54,13 +59,14 @@ brews:
     skip_upload: auto
 
 nfpms:
-  - package_name: tart-guest-agent
+  - package_name: "{{ .ProjectName }}"
     vendor: Cirrus Labs, Inc.
     homepage: https://github.com/cirruslabs/tart-guest-agent
     maintainer: support@cirruslabs.org
     description: Guest agent for Tart VMs
     section: misc
     formats:
+      - apk
       - deb
       - rpm
 
