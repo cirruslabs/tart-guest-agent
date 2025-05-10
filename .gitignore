@@ -1,0 +1,6 @@
+# Environment / workspace settings:
+.vscode/
+
+# Distribution / packaging:
+dist/
+vendor/
