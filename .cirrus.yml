@@ -44,7 +44,7 @@ task:
     - Lint
     - Tests
   install_script: brew install go goreleaser/tap/goreleaser-pro
-  release_script: goreleaser build --snapshot
+  release_script: goreleaser release --clean --snapshot
   goreleaser_artifacts:
     path: "dist/**"
 
