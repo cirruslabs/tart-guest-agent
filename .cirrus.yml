@@ -36,6 +36,30 @@ task:
   test_script: go test -v ./...
 
 task:
+  name: Check for lacking "buf generate" invocation
+
+  container:
+    image: golang:latest
+
+  install_buf_script: go install github.com/bufbuild/buf/cmd/buf@v1.50.0
+  generate_script: buf generate
+  check_script: git diff --exit-code
+
+task:
+  only_if: $CIRRUS_BRANCH != ''
+  name: buf push
+
+  container:
+    image: bufbuild/buf
+
+  login_script: echo $BUF_TOKEN | buf registry login --username $BUF_LOGIN --token-stdin
+  push_script: buf push --git-metadata
+
+  env:
+    BUF_LOGIN: fkorotkov
+    BUF_TOKEN: ENCRYPTED[!8ee7eb2504cc84b08d4a7c0dacbe103640b1feaa26d06f0df010784e872d39e65a0cdea3fc7c09b065a917a77113b96b!]
+
+task:
   name: Release (Dry Run)
   only_if: $CIRRUS_TAG == ''
   macos_instance:
