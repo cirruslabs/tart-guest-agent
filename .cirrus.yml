@@ -36,6 +36,16 @@ task:
   test_script: go test -v ./...
 
 task:
+  name: Check for lacking "buf generate" invocation
+
+  container:
+    image: golang:latest
+
+  install_buf_script: go install github.com/bufbuild/buf/cmd/buf@v1.50.0
+  generate_script: buf generate
+  check_script: git diff --exit-code
+
+task:
   name: Release (Dry Run)
   only_if: $CIRRUS_TAG == ''
   macos_instance:
