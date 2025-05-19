@@ -53,6 +53,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			Rows: uint16(firstExecRequestCommand.Command.GetTerminalSize().GetRows()),
 			Cols: uint16(firstExecRequestCommand.Command.GetTerminalSize().GetCols()),
 		})
+		defer ptmx.Close()
 
 		if firstExecRequestCommand.Command.Interactive {
 			stdin = ptmx
