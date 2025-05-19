@@ -1,6 +1,7 @@
 package vsock
 
 import (
+	"fmt"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
@@ -42,10 +43,22 @@ func (listener *listener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 
+	file := os.NewFile(uintptr(fd), "vsock")
+
+	peerName, err := unix.Getpeername(int(file.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get a peer name for an AF_VSOCK connection %w", err)
+	}
+
+	peerNameVM, ok := peerName.(*unix.SockaddrVM)
+	if !ok {
+		return nil, fmt.Errorf("accepted a non-AF_VSOCK connection on an AF_VSOCK socket")
+	}
+
 	return &conn{
-		file:       os.NewFile(uintptr(fd), "vsock"),
+		file:       file,
 		localPort:  listener.port,
-		remotePort: 0,
+		remotePort: peerNameVM.Port,
 	}, nil
 }
 
