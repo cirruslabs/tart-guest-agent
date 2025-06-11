@@ -7,6 +7,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"io"
 	"os"
@@ -20,11 +21,6 @@ const (
 
 	eofChar = 0x04
 )
-
-type standardStreamOutput struct {
-	Data []byte
-	Err  error
-}
 
 func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
 	// Read the first exec request, it should describe a command to execute
@@ -154,74 +150,88 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		}
 	}()
 
+	group, _ := errgroup.WithContext(stream.Context())
+
 	// Handle standard output from the command
-	stdoutOutputCh := make(chan *standardStreamOutput, 1)
+	group.Go(func() error {
+		buf := make([]byte, standardStreamsBufferSize)
 
-	go streamStandardStream(stdout, stdoutOutputCh)
+		for {
+			n, err := stdout.Read(buf)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
 
-	// Handle standard error from the command
-	//
-	// Note that it makes no sense to handle standard error when TTY is requested
-	// because in this case stdout and stderr will point to the same file descriptor
-	stderrOutputCh := make(chan *standardStreamOutput, 1)
-
-	if !firstExecRequestCommand.Command.Tty {
-		go streamStandardStream(stderr, stderrOutputCh)
-	}
-
-	// Wait for the command to finish
-	commandErrCh := make(chan error, 1)
-	go func() {
-		commandErrCh <- cmd.Wait()
-	}()
-
-	for {
-		select {
-		case stdoutOutput := <-stdoutOutputCh:
-			if err := stdoutOutput.Err; err != nil {
 				return err
 			}
 
 			if err := stream.Send(&ExecResponse{
 				Type: &ExecResponse_StandardOutput{
 					StandardOutput: &IOChunk{
-						Data: stdoutOutput.Data,
+						Data: slices.Clone(buf[:n]),
 					},
 				},
 			}); err != nil {
 				return err
 			}
-		case stderrOutput := <-stderrOutputCh:
-			if err := stderrOutput.Err; err != nil {
-				return err
-			}
+		}
+	})
 
-			if err := stream.Send(&ExecResponse{
-				Type: &ExecResponse_StandardError{
-					StandardError: &IOChunk{
-						Data: stderrOutput.Data,
+	// Handle standard error from the command
+	//
+	// Note that it makes no sense to handle standard error when TTY is requested
+	// because in this case stdout and stderr will point to the same file descriptor
+	if !firstExecRequestCommand.Command.Tty {
+		group.Go(func() error {
+			buf := make([]byte, standardStreamsBufferSize)
+
+			for {
+				n, err := stderr.Read(buf)
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						return nil
+					}
+
+					return err
+				}
+
+				if err := stream.Send(&ExecResponse{
+					Type: &ExecResponse_StandardError{
+						StandardError: &IOChunk{
+							Data: slices.Clone(buf[:n]),
+						},
 					},
-				},
-			}); err != nil {
-				return err
+				}); err != nil {
+					return err
+				}
 			}
-		case commandErr := <-commandErrCh:
-			exitCode := 0
+		})
+	}
 
-			var exitError *exec.ExitError
-			if errors.As(commandErr, &exitError) {
-				exitCode = exitError.ExitCode()
-			}
+	if err := group.Wait(); err != nil {
+		return err
+	}
 
-			return stream.Send(&ExecResponse{
-				Type: &ExecResponse_Exit_{
-					Exit: &ExecResponse_Exit{
-						Code: int32(exitCode),
-					},
-				},
-			})
+	// Wait for the command to finish
+	exitCode := 0
+
+	if err := cmd.Wait(); err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			exitCode = exitError.ExitCode()
+		} else {
+			return err
 		}
 	}
+
+	return stream.Send(&ExecResponse{
+		Type: &ExecResponse_Exit_{
+			Exit: &ExecResponse_Exit{
+				Code: int32(exitCode),
+			},
+		},
+	})
 }
 
 func formatCommandAndArgs(name string, args []string) string {
@@ -235,25 +245,4 @@ func formatCommandAndArgs(name string, args []string) string {
 	})
 
 	return fmt.Sprintf("[%s]", strings.Join(all, ", "))
-}
-
-func streamStandardStream(standardStream io.Reader, outputCh chan *standardStreamOutput) {
-	buf := make([]byte, standardStreamsBufferSize)
-
-	for {
-		n, err := standardStream.Read(buf)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				outputCh <- &standardStreamOutput{
-					Err: err,
-				}
-			}
-
-			return
-		}
-
-		outputCh <- &standardStreamOutput{
-			Data: slices.Clone(buf[:n]),
-		}
-	}
 }
