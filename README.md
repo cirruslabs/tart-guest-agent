@@ -11,6 +11,8 @@ Currently implemented features:
 * `tart exec` support (`--run-rpc`)
     * it's recommended to invoke it as a launchd [global agent](https://launchd.info/) because fewer privileges will be available to commands started via `tart exec`
     * however, you can also invoke it as a launchd [global daemon](https://launchd.info/) if running commands started via `tart exec` as `root` is desired
+* `tart ip --resolver=agent` support (`--run-rpc`)
+    * allows resolving VM's IP address without relying on DHCP leases and/or an ARP table
 
 To run all features appropriate for a given context, use component groups:
 

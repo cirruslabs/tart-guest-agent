@@ -314,6 +314,86 @@ func (x *IOChunk) GetData() []byte {
 	return nil
 }
 
+type ResolveIPRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveIPRequest) Reset() {
+	*x = ResolveIPRequest{}
+	mi := &file_rpc_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveIPRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveIPRequest) ProtoMessage() {}
+
+func (x *ResolveIPRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rpc_agent_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveIPRequest.ProtoReflect.Descriptor instead.
+func (*ResolveIPRequest) Descriptor() ([]byte, []int) {
+	return file_rpc_agent_proto_rawDescGZIP(), []int{4}
+}
+
+type ResolveIPResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveIPResponse) Reset() {
+	*x = ResolveIPResponse{}
+	mi := &file_rpc_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveIPResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveIPResponse) ProtoMessage() {}
+
+func (x *ResolveIPResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rpc_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveIPResponse.ProtoReflect.Descriptor instead.
+func (*ResolveIPResponse) Descriptor() ([]byte, []int) {
+	return file_rpc_agent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ResolveIPResponse) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
 type ExecRequest_Command struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -327,7 +407,7 @@ type ExecRequest_Command struct {
 
 func (x *ExecRequest_Command) Reset() {
 	*x = ExecRequest_Command{}
-	mi := &file_rpc_agent_proto_msgTypes[4]
+	mi := &file_rpc_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -339,7 +419,7 @@ func (x *ExecRequest_Command) String() string {
 func (*ExecRequest_Command) ProtoMessage() {}
 
 func (x *ExecRequest_Command) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_agent_proto_msgTypes[4]
+	mi := &file_rpc_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -399,7 +479,7 @@ type ExecResponse_Exit struct {
 
 func (x *ExecResponse_Exit) Reset() {
 	*x = ExecResponse_Exit{}
-	mi := &file_rpc_agent_proto_msgTypes[5]
+	mi := &file_rpc_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -411,7 +491,7 @@ func (x *ExecResponse_Exit) String() string {
 func (*ExecResponse_Exit) ProtoMessage() {}
 
 func (x *ExecResponse_Exit) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_agent_proto_msgTypes[5]
+	mi := &file_rpc_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -461,9 +541,13 @@ const file_rpc_agent_proto_rawDesc = "" +
 	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\rR\x04cols\"\x1d\n" +
 	"\aIOChunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data20\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\x12\n" +
+	"\x10ResolveIPRequest\"#\n" +
+	"\x11ResolveIPResponse\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip2d\n" +
 	"\x05Agent\x12'\n" +
-	"\x04Exec\x12\f.ExecRequest\x1a\r.ExecResponse(\x010\x01B5Z3github.com/cirruslabs/tart-guest-agent/internal/rpcb\x06proto3"
+	"\x04Exec\x12\f.ExecRequest\x1a\r.ExecResponse(\x010\x01\x122\n" +
+	"\tResolveIP\x12\x11.ResolveIPRequest\x1a\x12.ResolveIPResponseB5Z3github.com/cirruslabs/tart-guest-agent/internal/rpcb\x06proto3"
 
 var (
 	file_rpc_agent_proto_rawDescOnce sync.Once
@@ -477,27 +561,31 @@ func file_rpc_agent_proto_rawDescGZIP() []byte {
 	return file_rpc_agent_proto_rawDescData
 }
 
-var file_rpc_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_rpc_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_rpc_agent_proto_goTypes = []any{
 	(*ExecRequest)(nil),         // 0: ExecRequest
 	(*ExecResponse)(nil),        // 1: ExecResponse
 	(*TerminalSize)(nil),        // 2: TerminalSize
 	(*IOChunk)(nil),             // 3: IOChunk
-	(*ExecRequest_Command)(nil), // 4: ExecRequest.Command
-	(*ExecResponse_Exit)(nil),   // 5: ExecResponse.Exit
+	(*ResolveIPRequest)(nil),    // 4: ResolveIPRequest
+	(*ResolveIPResponse)(nil),   // 5: ResolveIPResponse
+	(*ExecRequest_Command)(nil), // 6: ExecRequest.Command
+	(*ExecResponse_Exit)(nil),   // 7: ExecResponse.Exit
 }
 var file_rpc_agent_proto_depIdxs = []int32{
-	4, // 0: ExecRequest.command:type_name -> ExecRequest.Command
+	6, // 0: ExecRequest.command:type_name -> ExecRequest.Command
 	3, // 1: ExecRequest.standard_input:type_name -> IOChunk
 	2, // 2: ExecRequest.terminal_resize:type_name -> TerminalSize
-	5, // 3: ExecResponse.exit:type_name -> ExecResponse.Exit
+	7, // 3: ExecResponse.exit:type_name -> ExecResponse.Exit
 	3, // 4: ExecResponse.standard_output:type_name -> IOChunk
 	3, // 5: ExecResponse.standard_error:type_name -> IOChunk
 	2, // 6: ExecRequest.Command.terminal_size:type_name -> TerminalSize
 	0, // 7: Agent.Exec:input_type -> ExecRequest
-	1, // 8: Agent.Exec:output_type -> ExecResponse
-	8, // [8:9] is the sub-list for method output_type
-	7, // [7:8] is the sub-list for method input_type
+	4, // 8: Agent.ResolveIP:input_type -> ResolveIPRequest
+	1, // 9: Agent.Exec:output_type -> ExecResponse
+	5, // 10: Agent.ResolveIP:output_type -> ResolveIPResponse
+	9, // [9:11] is the sub-list for method output_type
+	7, // [7:9] is the sub-list for method input_type
 	7, // [7:7] is the sub-list for extension type_name
 	7, // [7:7] is the sub-list for extension extendee
 	0, // [0:7] is the sub-list for field type_name
@@ -524,7 +612,7 @@ func file_rpc_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rpc_agent_proto_rawDesc), len(file_rpc_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
