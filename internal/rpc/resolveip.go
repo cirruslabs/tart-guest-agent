@@ -9,7 +9,7 @@ import (
 func (rpc *RPC) ResolveIP(ctx context.Context, _ *ResolveIPRequest) (*ResolveIPResponse, error) {
 	ifaceAddrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve interface addresses: %w", err)
+		return nil, fmt.Errorf("failed to retrieve VM's network interface addresses: %w", err)
 	}
 
 	for _, ifaceAddr := range ifaceAddrs {
@@ -38,5 +38,5 @@ func (rpc *RPC) ResolveIP(ctx context.Context, _ *ResolveIPRequest) (*ResolveIPR
 		}, nil
 	}
 
-	return nil, fmt.Errorf("cannot identify VMs IP address")
+	return nil, fmt.Errorf("cannot resolve VM's IP address")
 }
