@@ -198,6 +198,10 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 	}
 }
 
+func (agent *VDAgent) Close() error {
+	return agent.serialPort.Close()
+}
+
 func (agent *VDAgent) processClipboardState(newClipboardState []byte) error {
 	if bytes.Equal(agent.lastClipboardState, newClipboardState) {
 		// Nothing changed since the last VD_AGENT_CLIPBOARD_GRAB from us

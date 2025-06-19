@@ -1,8 +1,8 @@
 package command
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/cirruslabs/tart-guest-agent/internal/diskresizer"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
@@ -13,9 +13,11 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 	"os"
 	"syscall"
+	"time"
 )
 
 var resizeDisk bool
@@ -26,6 +28,8 @@ var runDaemon bool
 var runAgent bool
 
 var debug bool
+
+const componentFailedTimeout = time.Second
 
 func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -96,43 +100,92 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	group, ctx := errgroup.WithContext(cmd.Context())
+
 	if runVdagent {
-		zap.S().Infof("running vdagent...")
+		group.Go(func() error {
+			for {
+				if err := runVdagentOnce(ctx); err != nil {
+					return err
+				}
 
-		vdAgent, err := vdagent.New()
-		if err != nil {
-			return err
-		}
-
-		go func() {
-			if err := vdAgent.Run(cmd.Context()); err != nil {
-				zap.S().Fatalf("vdagent failed: %v", err)
+				select {
+				case <-time.After(componentFailedTimeout):
+					continue
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
-		}()
+		})
 	}
 
 	if runRPC {
-		listener, err := vsock.Listen(8080)
-		if err != nil {
-			return fmt.Errorf("failed to listen on AF_VSOCK port 8080: %v", err)
-		}
+		group.Go(func() error {
+			for {
+				if err := runRPCOnce(ctx); err != nil {
+					return err
+				}
 
-		zap.S().Info("running RPC server on AF_VSOCK port 8080...")
-
-		rpcServer, err := rpc.New(listener)
-		if err != nil {
-			return err
-		}
-
-		go func() {
-			if err := rpcServer.Run(); err != nil {
-				zap.S().Fatalf("RPC server failed: %v", err)
+				select {
+				case <-time.After(componentFailedTimeout):
+					continue
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
-		}()
+		})
 	}
 
-	// Wait indefinitely
-	<-cmd.Context().Done()
+	return group.Wait()
+}
 
-	return cmd.Context().Err()
+func runVdagentOnce(ctx context.Context) error {
+	zap.S().Infof("initializing vdagent...")
+
+	vdAgent, err := vdagent.New()
+	if err != nil {
+		zap.S().Errorf("failed to initialize vdagent: %v", err)
+
+		return nil
+	}
+	defer vdAgent.Close()
+
+	zap.S().Infof("running vdagent...")
+
+	if err := vdAgent.Run(ctx); err != nil {
+		zap.S().Errorf("failed to run vdagent: %v", err)
+
+		return nil
+	}
+
+	return nil
+}
+
+func runRPCOnce(ctx context.Context) error {
+	zap.S().Infof("initializing RPC server...")
+
+	listener, err := vsock.Listen(8080)
+	if err != nil {
+		zap.S().Errorf("RPC server failed to listen on AF_VSOCK port 8080: %v", err)
+
+		return nil
+	}
+	defer listener.Close()
+
+	rpcServer, err := rpc.New(listener)
+	if err != nil {
+		zap.S().Errorf("failed to initialize RPC server: %v", err)
+
+		return nil
+	}
+
+	zap.S().Info("running RPC server on AF_VSOCK port 8080...")
+
+	if err := rpcServer.Run(); err != nil {
+		zap.S().Errorf("failed to run RPC server: %v", err)
+
+		return nil
+	}
+
+	return nil
 }
