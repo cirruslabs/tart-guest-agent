@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Agent_Exec_FullMethodName = "/Agent/Exec"
+	Agent_Exec_FullMethodName      = "/Agent/Exec"
+	Agent_ResolveIP_FullMethodName = "/Agent/ResolveIP"
 )
 
 // AgentClient is the client API for Agent service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentClient interface {
 	Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecRequest, ExecResponse], error)
+	ResolveIP(ctx context.Context, in *ResolveIPRequest, opts ...grpc.CallOption) (*ResolveIPResponse, error)
 }
 
 type agentClient struct {
@@ -50,11 +52,22 @@ func (c *agentClient) Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.B
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Agent_ExecClient = grpc.BidiStreamingClient[ExecRequest, ExecResponse]
 
+func (c *agentClient) ResolveIP(ctx context.Context, in *ResolveIPRequest, opts ...grpc.CallOption) (*ResolveIPResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveIPResponse)
+	err := c.cc.Invoke(ctx, Agent_ResolveIP_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServer is the server API for Agent service.
 // All implementations must embed UnimplementedAgentServer
 // for forward compatibility.
 type AgentServer interface {
 	Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error
+	ResolveIP(context.Context, *ResolveIPRequest) (*ResolveIPResponse, error)
 	mustEmbedUnimplementedAgentServer()
 }
 
@@ -67,6 +80,9 @@ type UnimplementedAgentServer struct{}
 
 func (UnimplementedAgentServer) Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Exec not implemented")
+}
+func (UnimplementedAgentServer) ResolveIP(context.Context, *ResolveIPRequest) (*ResolveIPResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolveIP not implemented")
 }
 func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
 func (UnimplementedAgentServer) testEmbeddedByValue()               {}
@@ -96,13 +112,36 @@ func _Agent_Exec_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Agent_ExecServer = grpc.BidiStreamingServer[ExecRequest, ExecResponse]
 
+func _Agent_ResolveIP_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveIPRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ResolveIP(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ResolveIP_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ResolveIP(ctx, req.(*ResolveIPRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Agent_ServiceDesc is the grpc.ServiceDesc for Agent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Agent_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "Agent",
 	HandlerType: (*AgentServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ResolveIP",
+			Handler:    _Agent_ResolveIP_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Exec",

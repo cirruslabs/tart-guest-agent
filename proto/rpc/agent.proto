@@ -6,6 +6,7 @@ option go_package = "github.com/cirruslabs/tart-guest-agent/internal/rpc";
 
 service Agent {
   rpc Exec(stream ExecRequest) returns (stream ExecResponse);
+  rpc ResolveIP(ResolveIPRequest) returns (ResolveIPResponse);
 }
 
 message ExecRequest {
@@ -43,4 +44,12 @@ message TerminalSize {
 
 message IOChunk {
   bytes data = 1;
+}
+
+message ResolveIPRequest {
+  // nothing for now
+}
+
+message ResolveIPResponse {
+  string ip = 1;
 }
