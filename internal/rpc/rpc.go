@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"google.golang.org/grpc"
 	"net"
 )
@@ -23,6 +24,12 @@ func New(listener net.Listener) (*RPC, error) {
 	return rpc, nil
 }
 
-func (rpc *RPC) Run() error {
+func (rpc *RPC) Run(ctx context.Context) error {
+	go func() {
+		<-ctx.Done()
+
+		rpc.grpcServer.Stop()
+	}()
+
 	return rpc.grpcServer.Serve(rpc.listener)
 }
