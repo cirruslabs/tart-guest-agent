@@ -163,6 +163,11 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					return nil
 				}
 
+				// PTY way of signalling io.EOF
+				if ptmx != nil && strings.Contains(err.Error(), "input/output error") {
+					return nil
+				}
+
 				return err
 			}
 
@@ -210,7 +215,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	}
 
 	if err := group.Wait(); err != nil {
-		return err
+		zap.S().Warnf("%v", err)
 	}
 
 	// Wait for the command to finish

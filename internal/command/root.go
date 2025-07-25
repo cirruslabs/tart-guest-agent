@@ -181,7 +181,7 @@ func runRPCOnce(ctx context.Context) error {
 
 	zap.S().Info("running RPC server on AF_VSOCK port 8080...")
 
-	if err := rpcServer.Run(); err != nil {
+	if err := rpcServer.Run(ctx); err != nil {
 		zap.S().Errorf("failed to run RPC server: %v", err)
 
 		return nil

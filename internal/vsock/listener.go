@@ -18,6 +18,10 @@ func Listen(port uint32) (net.Listener, error) {
 		return nil, err
 	}
 
+	if err := unix.SetNonblock(fd, true); err != nil {
+		return nil, err
+	}
+
 	file := os.NewFile(uintptr(fd), "vsock")
 
 	if err := unix.Bind(int(file.Fd()), &unix.SockaddrVM{
@@ -40,6 +44,10 @@ func Listen(port uint32) (net.Listener, error) {
 func (listener *listener) Accept() (net.Conn, error) {
 	fd, _, err := unix.Accept(int(listener.file.Fd()))
 	if err != nil {
+		return nil, err
+	}
+
+	if err := unix.SetNonblock(fd, true); err != nil {
 		return nil, err
 	}
 
