@@ -1,0 +1,10 @@
+[Unit]
+Description=Guest agent for Tart VMs
+
+[Service]
+Type=simple
+User=admin
+ExecStart=tart-guest-agent --run-rpc
+
+[Install]
+WantedBy=multi-user.target

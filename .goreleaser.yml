@@ -69,6 +69,16 @@ nfpms:
       - apk
       - deb
       - rpm
+    contents:
+      - src: packaging/tart-guest-agent.service
+        dst: /etc/systemd/system/tart-guest-agent.service
+        file_info:
+          mode: 0644
+
+    scripts:
+      postinstall: packaging/postinstall.sh
+      preremove: packaging/preremove.sh
+      postremove: packaging/postremove.sh
 
 furies:
   - account: cirruslabs
