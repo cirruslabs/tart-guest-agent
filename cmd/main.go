@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/cirruslabs/tart-guest-agent/internal/command"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
@@ -41,6 +42,11 @@ func mainImpl() bool {
 
 	if err := command.NewRootCommand().ExecuteContext(ctx); err != nil {
 		logger.Sugar().Error(err)
+
+		// Do not treat context cancellation as an error
+		if errors.Is(err, context.Canceled) {
+			return true
+		}
 
 		return false
 	}
