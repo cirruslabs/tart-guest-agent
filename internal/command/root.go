@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 	"os"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -76,14 +77,16 @@ func run(cmd *cobra.Command, args []string) error {
 		runRPC = true
 	}
 
-	// Terminate to prevent corruption on systems with disk layouts other than Tart's
-	communicationPoint, ok := tart.LocateCommunicationPoint()
-	if !ok {
-		return unix.Kill(os.Getppid(), syscall.SIGTERM)
-	}
+	// Terminate to prevent disk corruption on macOS guests
+	// with disk layouts other than provided by Tart
+	if runtime.GOOS == "darwin" {
+		version, ok := tart.Version()
+		if !ok {
+			return unix.Kill(os.Getppid(), syscall.SIGTERM)
+		}
 
-	zap.S().Infof("successfully located host communication point %s, proceeding...",
-		communicationPoint)
+		zap.S().Infof("running on Tart %s, proceeding...", version.String())
+	}
 
 	// Perform disk resizing
 	if resizeDisk {
