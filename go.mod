@@ -3,6 +3,7 @@ module github.com/cirruslabs/tart-guest-agent
 go 1.24
 
 require (
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/creack/pty v1.1.24
 	github.com/hashicorp/go-version v1.7.0
 	github.com/samber/lo v1.51.0
