@@ -13,8 +13,8 @@ require (
 	golang.design/x/clipboard v0.7.1
 	golang.org/x/sync v0.17.0
 	golang.org/x/sys v0.36.0
-	google.golang.org/grpc v1.75.0
-	google.golang.org/protobuf v1.36.8
+	google.golang.org/grpc v1.75.1
+	google.golang.org/protobuf v1.36.9
 	howett.net/plist v1.0.1
 )
 
