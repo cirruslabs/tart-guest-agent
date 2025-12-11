@@ -3,6 +3,11 @@ package command
 import (
 	"context"
 	"errors"
+	"os"
+	"runtime"
+	"syscall"
+	"time"
+
 	"github.com/cirruslabs/tart-guest-agent/internal/diskresizer"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
@@ -15,10 +20,6 @@ import (
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
-	"os"
-	"runtime"
-	"syscall"
-	"time"
 )
 
 var resizeDisk bool
@@ -136,6 +137,15 @@ func run(cmd *cobra.Command, args []string) error {
 					return ctx.Err()
 				}
 			}
+		})
+	}
+
+	// When running in daemon or agent mode, wait indefinitely until terminated
+	if runDaemon || runAgent {
+		group.Go(func() error {
+			<-ctx.Done()
+
+			return ctx.Err()
 		})
 	}
 
