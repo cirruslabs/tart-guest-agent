@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/cirruslabs/tart-guest-agent/internal/diskresizer"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
@@ -108,13 +109,15 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if runVdagent {
 		group.Go(func() error {
+			exponentialBackoff := backoff.NewExponentialBackOff()
+
 			for {
 				if err := runVdagentOnce(ctx); err != nil {
 					return err
 				}
 
 				select {
-				case <-time.After(componentFailedTimeout):
+				case <-time.After(exponentialBackoff.NextBackOff()):
 					continue
 				case <-ctx.Done():
 					return ctx.Err()
