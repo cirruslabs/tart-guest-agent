@@ -31,7 +31,13 @@ var runAgent bool
 
 var debug bool
 
-const componentFailedTimeout = time.Second
+const (
+	// componentFailedTimeout is the default retry delay for transient failures
+	componentFailedTimeout = time.Second
+	// spiceNotConnectedTimeout is the retry delay when SPICE clipboard channel
+	// is not available (e.g., running headless or without clipboard sharing)
+	spiceNotConnectedTimeout = time.Minute
+)
 
 func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -109,12 +115,10 @@ func run(cmd *cobra.Command, args []string) error {
 	if runVdagent {
 		group.Go(func() error {
 			for {
-				if err := runVdagentOnce(ctx); err != nil {
-					return err
-				}
+				backoff := runVdagentOnce(ctx)
 
 				select {
-				case <-time.After(componentFailedTimeout):
+				case <-time.After(backoff):
 					continue
 				case <-ctx.Done():
 					return ctx.Err()
@@ -152,26 +156,32 @@ func run(cmd *cobra.Command, args []string) error {
 	return group.Wait()
 }
 
-func runVdagentOnce(ctx context.Context) error {
+func runVdagentOnce(ctx context.Context) time.Duration {
 	zap.S().Infof("initializing vdagent...")
 
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
 
-		return nil
+		return componentFailedTimeout
 	}
 	defer vdAgent.Close()
 
 	zap.S().Infof("running vdagent...")
 
 	if err := vdAgent.Run(ctx); err != nil {
-		zap.S().Errorf("failed to run vdagent: %v", err)
+		// Check if SPICE clipboard channel is not available
+		var spiceErr *vdagent.ErrSPICENotConnected
+		if errors.As(err, &spiceErr) {
+			zap.S().Infof("SPICE clipboard channel not available, will retry in %v", spiceNotConnectedTimeout)
+			return spiceNotConnectedTimeout
+		}
 
-		return nil
+		zap.S().Errorf("failed to run vdagent: %v", err)
+		return componentFailedTimeout
 	}
 
-	return nil
+	return componentFailedTimeout
 }
 
 func runRPCOnce(ctx context.Context) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 	"go.uber.org/zap"
@@ -14,10 +15,26 @@ import (
 
 const serialPortPath = "/dev/tty.com.redhat.spice.0"
 
+// ErrSPICENotConnected is returned when the SPICE clipboard channel
+// is not available. This typically happens when running headless or
+// when clipboard sharing is not enabled on the host.
+type ErrSPICENotConnected struct {
+	Err error
+}
+
+func (e *ErrSPICENotConnected) Error() string {
+	return fmt.Sprintf("SPICE clipboard channel not connected: %v", e.Err)
+}
+
+func (e *ErrSPICENotConnected) Unwrap() error {
+	return e.Err
+}
+
 type VDAgent struct {
-	serialPort         *os.File
-	vdi                *vdi.VDI
-	lastClipboardState []byte
+	serialPort           *os.File
+	vdi                  *vdi.VDI
+	lastClipboardState   []byte
+	clipboardInitialized bool
 }
 
 func New() (*VDAgent, error) {
@@ -26,9 +43,8 @@ func New() (*VDAgent, error) {
 		return nil, err
 	}
 
-	if err := clipboard.Init(); err != nil {
-		return nil, err
-	}
+	// Note: clipboard.Init() is deferred until we confirm SPICE is connected.
+	// This avoids expensive initialization when clipboard sharing is unavailable.
 
 	return &VDAgent{
 		serialPort: sp,
@@ -37,7 +53,14 @@ func New() (*VDAgent, error) {
 }
 
 func (agent *VDAgent) Run(ctx context.Context) error {
-	clipboardCh := clipboard.Watch(ctx, clipboard.FmtText)
+	// clipboardCh is nil until clipboard is initialized.
+	// A nil channel blocks forever on receive, which is fine for the select.
+	var clipboardCh <-chan []byte
+
+	// Create a child context for clipboard.Watch() so we can cancel it
+	// when Run() exits, preventing goroutine leaks on retry.
+	clipboardCtx, clipboardCancel := context.WithCancel(ctx)
+	defer clipboardCancel()
 
 	for {
 		// Check for cancellation and clipboard changes
@@ -63,7 +86,24 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				continue
 			}
 
+			// If we haven't successfully initialized clipboard yet,
+			// this means SPICE was never connected - use special error
+			// to signal longer backoff.
+			if !agent.clipboardInitialized {
+				return &ErrSPICENotConnected{Err: err}
+			}
+
 			return err
+		}
+
+		// First successful read from SPICE - now initialize clipboard
+		if !agent.clipboardInitialized {
+			if err := clipboard.Init(); err != nil {
+				return fmt.Errorf("failed to initialize clipboard: %w", err)
+			}
+			clipboardCh = clipboard.Watch(clipboardCtx, clipboard.FmtText)
+			agent.clipboardInitialized = true
+			zap.S().Debug("SPICE connected, clipboard initialized")
 		}
 
 		switch vdiAgentMessage.Type {
