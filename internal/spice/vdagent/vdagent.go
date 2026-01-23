@@ -37,7 +37,10 @@ func New() (*VDAgent, error) {
 }
 
 func (agent *VDAgent) Run(ctx context.Context) error {
-	clipboardCh := clipboard.Watch(ctx, clipboard.FmtText)
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	clipboardCh := clipboard.Watch(subCtx, clipboard.FmtText)
 
 	for {
 		// Check for cancellation and clipboard changes
