@@ -5,30 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 	"go.uber.org/zap"
 	"golang.design/x/clipboard"
-	"os"
-	"time"
 )
 
 const serialPortPath = "/dev/tty.com.redhat.spice.0"
-
-// ErrSPICENotConnected is returned when the SPICE clipboard channel
-// is not available. This typically happens when running headless or
-// when clipboard sharing is not enabled on the host.
-type ErrSPICENotConnected struct {
-	Err error
-}
-
-func (e *ErrSPICENotConnected) Error() string {
-	return fmt.Sprintf("SPICE clipboard channel not connected: %v", e.Err)
-}
-
-func (e *ErrSPICENotConnected) Unwrap() error {
-	return e.Err
-}
 
 type VDAgent struct {
 	serialPort           *os.File
@@ -84,13 +70,6 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				continue
-			}
-
-			// If we haven't successfully initialized clipboard yet,
-			// this means SPICE was never connected - use special error
-			// to signal longer backoff.
-			if !agent.clipboardInitialized {
-				return &ErrSPICENotConnected{Err: err}
 			}
 
 			return err

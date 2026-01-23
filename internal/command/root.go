@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/cirruslabs/tart-guest-agent/internal/diskresizer"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
@@ -31,13 +32,7 @@ var runAgent bool
 
 var debug bool
 
-const (
-	// componentFailedTimeout is the default retry delay for transient failures
-	componentFailedTimeout = time.Second
-	// spiceNotConnectedTimeout is the retry delay when SPICE clipboard channel
-	// is not available (e.g., running headless or without clipboard sharing)
-	spiceNotConnectedTimeout = time.Minute
-)
+const componentFailedTimeout = 5 * time.Second
 
 func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -114,11 +109,14 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if runVdagent {
 		group.Go(func() error {
+			expBackoff := backoff.NewExponentialBackOff()
+			expBackoff.InitialInterval = componentFailedTimeout
+
 			for {
-				backoff := runVdagentOnce(ctx)
+				runVdagentOnce(ctx)
 
 				select {
-				case <-time.After(backoff):
+				case <-time.After(expBackoff.NextBackOff()):
 					continue
 				case <-ctx.Done():
 					return ctx.Err()
@@ -156,32 +154,21 @@ func run(cmd *cobra.Command, args []string) error {
 	return group.Wait()
 }
 
-func runVdagentOnce(ctx context.Context) time.Duration {
+func runVdagentOnce(ctx context.Context) {
 	zap.S().Infof("initializing vdagent...")
 
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
-
-		return componentFailedTimeout
+		return
 	}
 	defer vdAgent.Close()
 
 	zap.S().Infof("running vdagent...")
 
 	if err := vdAgent.Run(ctx); err != nil {
-		// Check if SPICE clipboard channel is not available
-		var spiceErr *vdagent.ErrSPICENotConnected
-		if errors.As(err, &spiceErr) {
-			zap.S().Infof("SPICE clipboard channel not available, will retry in %v", spiceNotConnectedTimeout)
-			return spiceNotConnectedTimeout
-		}
-
 		zap.S().Errorf("failed to run vdagent: %v", err)
-		return componentFailedTimeout
 	}
-
-	return componentFailedTimeout
 }
 
 func runRPCOnce(ctx context.Context) error {
