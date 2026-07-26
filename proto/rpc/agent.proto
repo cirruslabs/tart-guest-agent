@@ -21,10 +21,17 @@ message ExecRequest {
     string workdir = 8;
   }
 
+  message Signal {
+    uint64 request_id = 1;
+    uint32 signal = 2;
+    bool all = 3;
+  }
+
   oneof type {
     Command command = 1;
     IOChunk standard_input = 2;
     TerminalSize terminal_resize = 3;
+    Signal signal = 4;
   }
 }
 
@@ -33,10 +40,20 @@ message ExecResponse {
     int32 code = 1;
   }
 
+  message Started {
+    uint32 pid = 1;
+  }
+
+  message SignalAck {
+    uint64 request_id = 1;
+  }
+
   oneof type {
     Exit exit = 1;
     IOChunk standard_output = 2;
     IOChunk standard_error = 3;
+    Started started = 4;
+    SignalAck signal_ack = 5;
   }
 }
 

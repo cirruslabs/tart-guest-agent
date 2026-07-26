@@ -11,6 +11,9 @@ Currently implemented features:
 * `tart exec` support (`--run-rpc`)
     * it's recommended to invoke it as a launchd [global agent](https://launchd.info/) because fewer privileges will be available to commands started via `tart exec`
     * however, you can also invoke it as a launchd [global daemon](https://launchd.info/) if running commands started via `tart exec` as `root` is desired
+    * attached `/Agent/Exec` commands report `Started` with the guest process ID before standard output, standard error, or exit
+    * clients can send a `Signal` with a unique, nonzero `request_id` and a guest-native signal number; `all = false` signals only that command, while `all = true` signals only its dedicated process group
+    * a matching `SignalAck` is sent only after successful delivery; existing clients can ignore the additive events, and detached commands retain their original exit-only behavior
 * `tart ip --resolver=agent` support (`--run-rpc`)
     * allows resolving VM's IP address without relying on DHCP leases and/or an ARP table
 

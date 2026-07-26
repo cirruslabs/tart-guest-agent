@@ -4,17 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/creack/pty"
-	"github.com/samber/lo"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
 	"io"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
+
+	"github.com/creack/pty"
+	"github.com/samber/lo"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -22,6 +26,18 @@ const (
 
 	eofChar = 0x04
 )
+
+type execResponseSender struct {
+	stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]
+	mu     sync.Mutex
+}
+
+func (sender *execResponseSender) send(response *ExecResponse) error {
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+
+	return sender.stream.Send(response)
+}
 
 func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
 	// Read the first exec request, it should describe a command to execute
@@ -43,7 +59,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	}
 
 	// Execute the command
-	execCtx := stream.Context()
+	execCtx, cancelExec := context.WithCancel(stream.Context())
+	defer cancelExec()
+
 	if firstExecRequestCommand.Command.Detach {
 		execCtx = context.Background()
 	}
@@ -51,6 +69,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	cmd := exec.CommandContext(execCtx, firstExecRequestCommand.Command.Name,
 		firstExecRequestCommand.Command.Args...)
 	applyExecOverrides(cmd, firstExecRequestCommand.Command)
+	responseSender := &execResponseSender{stream: stream}
 
 	if firstExecRequestCommand.Command.Detach {
 		cmd.Stdout = io.Discard
@@ -66,7 +85,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			}
 		}
 
-		if err := stream.Send(&ExecResponse{
+		if err := responseSender.send(&ExecResponse{
 			Type: &ExecResponse_Exit_{
 				Exit: &ExecResponse_Exit{
 					Code: 0,
@@ -112,6 +131,10 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			return err
 		}
 
+		// Give each attached command its own process group. PTY commands already
+		// receive a dedicated session and process group from pty.StartWithSize.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 		err = cmd.Start()
 	}
 	if err != nil {
@@ -121,15 +144,39 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		defer ptmx.Close()
 	}
 
-	// Handle standard input and terminal resize events from the client
+	// Send the managed guest PID before starting any output readers, so even
+	// commands that finish immediately cannot produce output before Started.
+	if err := responseSender.send(&ExecResponse{
+		Type: &ExecResponse_Started_{
+			Started: &ExecResponse_Started{Pid: uint32(cmd.Process.Pid)},
+		},
+	}); err != nil {
+		cancelExec()
+		_ = cmd.Wait()
+		return err
+	}
+
+	// Handle standard input, terminal resize, and signals from this stream only.
 	fromClientErrCh := make(chan error, 1)
+	reportClientError := func(err error) {
+		select {
+		case fromClientErrCh <- err:
+		default:
+		}
+		cancelExec()
+	}
+
+	var signalMu sync.Mutex
+	processExited := false
+	seenSignalRequests := make(map[uint64]struct{})
 
 	go func() {
 		for {
 			request, err := stream.Recv()
 			if err != nil {
-				if !errors.Is(err, context.Canceled) {
-					fromClientErrCh <- err
+				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&
+					status.Code(err) != codes.Canceled {
+					reportClientError(err)
 				}
 
 				return
@@ -156,7 +203,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					} else {
 						// Close the standard input
 						if err := stdin.Close(); err != nil {
-							fromClientErrCh <- err
+							reportClientError(err)
 
 							return
 						}
@@ -166,7 +213,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 				}
 
 				if _, err := stdin.Write(dataToWrite); err != nil {
-					fromClientErrCh <- err
+					reportClientError(err)
 
 					return
 				}
@@ -181,8 +228,45 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					Rows: uint16(typedAction.TerminalResize.GetRows()),
 					Cols: uint16(typedAction.TerminalResize.GetCols()),
 				}); err != nil {
-					fromClientErrCh <- err
+					reportClientError(err)
 
+					return
+				}
+			case *ExecRequest_Signal_:
+				signalRequest := typedAction.Signal
+				if signalRequest == nil || signalRequest.RequestId == 0 {
+					reportClientError(status.Error(codes.InvalidArgument,
+						"signal request_id must be nonzero"))
+					return
+				}
+				if _, seen := seenSignalRequests[signalRequest.RequestId]; seen {
+					reportClientError(status.Errorf(codes.InvalidArgument,
+						"signal request_id %d has already been used", signalRequest.RequestId))
+					return
+				}
+				seenSignalRequests[signalRequest.RequestId] = struct{}{}
+
+				if err := func() error {
+					signalMu.Lock()
+					defer signalMu.Unlock()
+
+					if processExited {
+						return status.Error(codes.FailedPrecondition,
+							"managed process has already exited")
+					}
+					if err := deliverExecSignal(cmd.Process, signalRequest); err != nil {
+						return err
+					}
+
+					return responseSender.send(&ExecResponse{
+						Type: &ExecResponse_SignalAck_{
+							SignalAck: &ExecResponse_SignalAck{
+								RequestId: signalRequest.RequestId,
+							},
+						},
+					})
+				}(); err != nil {
+					reportClientError(err)
 					return
 				}
 			}
@@ -210,7 +294,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 				return err
 			}
 
-			if err := stream.Send(&ExecResponse{
+			if err := responseSender.send(&ExecResponse{
 				Type: &ExecResponse_StandardOutput{
 					StandardOutput: &IOChunk{
 						Data: slices.Clone(buf[:n]),
@@ -240,7 +324,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					return err
 				}
 
-				if err := stream.Send(&ExecResponse{
+				if err := responseSender.send(&ExecResponse{
 					Type: &ExecResponse_StandardError{
 						StandardError: &IOChunk{
 							Data: slices.Clone(buf[:n]),
@@ -257,25 +341,72 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		zap.S().Warnf("%v", err)
 	}
 
-	// Wait for the command to finish
-	exitCode := 0
+	// Wait for the command to finish before allowing the final exit response.
+	waitErr := cmd.Wait()
+	signalMu.Lock()
+	defer signalMu.Unlock()
+	processExited = true
 
-	if err := cmd.Wait(); err != nil {
+	select {
+	case err := <-fromClientErrCh:
+		return err
+	default:
+	}
+
+	exitCode := 0
+	if waitErr != nil {
 		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
+		if errors.As(waitErr, &exitError) {
 			exitCode = exitError.ExitCode()
 		} else {
-			return err
+			return waitErr
 		}
 	}
 
-	return stream.Send(&ExecResponse{
+	return responseSender.send(&ExecResponse{
 		Type: &ExecResponse_Exit_{
 			Exit: &ExecResponse_Exit{
 				Code: int32(exitCode),
 			},
 		},
 	})
+}
+
+func deliverExecSignal(process *os.Process, request *ExecRequest_Signal) error {
+	var signal syscall.Signal
+	switch request.Signal {
+	case uint32(syscall.SIGHUP), uint32(syscall.SIGINT), uint32(syscall.SIGQUIT),
+		uint32(syscall.SIGKILL), uint32(syscall.SIGTERM), uint32(syscall.SIGUSR1),
+		uint32(syscall.SIGUSR2), uint32(syscall.SIGCONT), uint32(syscall.SIGSTOP),
+		uint32(syscall.SIGTSTP), uint32(syscall.SIGWINCH):
+		signal = syscall.Signal(request.Signal)
+	default:
+		return status.Errorf(codes.InvalidArgument,
+			"unsupported signal %d", request.Signal)
+	}
+
+	var err error
+	if request.All {
+		// Every attached command leads its own process group, so a negative
+		// managed PID cannot signal the agent or another execution.
+		err = syscall.Kill(-process.Pid, signal)
+	} else {
+		err = process.Signal(signal)
+	}
+	if err != nil {
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			return status.Errorf(codes.FailedPrecondition,
+				"managed process is no longer running: %v", err)
+		}
+		if errors.Is(err, syscall.EPERM) {
+			return status.Errorf(codes.PermissionDenied,
+				"cannot signal managed process: %v", err)
+		}
+		return status.Errorf(codes.Internal,
+			"cannot deliver signal %d to managed process: %v", request.Signal, err)
+	}
+
+	return nil
 }
 
 func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) {
