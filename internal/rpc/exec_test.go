@@ -1,8 +1,7 @@
-package rpc
+package rpc_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,12 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -27,7 +27,10 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-const execTestTimeout = 15 * time.Second
+const (
+	execTestTimeout      = 15 * time.Second
+	execTestSleepCommand = "exec sleep 30"
+)
 
 type execTestResult struct {
 	stdout strings.Builder
@@ -36,16 +39,30 @@ type execTestResult struct {
 	exit   int32
 }
 
-func newExecTestClient(t *testing.T) (*grpc.ClientConn, AgentClient) {
+type legacyExecDescriptorSet struct {
+	request  protoreflect.MessageDescriptor
+	response protoreflect.MessageDescriptor
+}
+
+type legacyExecStream struct {
+	stream grpc.ClientStream
+}
+
+func newExecTestConnection(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
-	server, err := New(listener)
-	if err != nil {
-		t.Fatalf("create RPC server: %v", err)
-	}
+	server, err := rpc.New(listener)
+	require.NoError(t, err, "create RPC server")
 
 	serverContext, stopServer := context.WithCancel(context.Background())
+
+	t.Cleanup(func() {
+		stopServer()
+
+		_ = listener.Close()
+	})
+
 	go func() {
 		_ = server.Run(serverContext)
 	}()
@@ -56,66 +73,103 @@ func newExecTestClient(t *testing.T) (*grpc.ClientConn, AgentClient) {
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if err != nil {
-		stopServer()
-		_ = listener.Close()
-		t.Fatalf("create in-memory gRPC client: %v", err)
-	}
+	require.NoError(t, err, "create in-memory gRPC client")
 
 	t.Cleanup(func() {
-		stopServer()
 		_ = connection.Close()
-		_ = listener.Close()
 	})
 
-	return connection, NewAgentClient(connection)
+	return connection
 }
 
-func startExecTest(t *testing.T, client AgentClient, command *ExecRequest_Command) (
-	grpc.BidiStreamingClient[ExecRequest, ExecResponse], *ExecResponse_Started,
-) {
+func newExecTestCommand(script string) *rpc.ExecRequest_Command {
+	command := new(rpc.ExecRequest_Command)
+	command.Name = "sh"
+	command.Args = []string{"-c", script}
+
+	return command
+}
+
+func newExecTestCommandRequest(command *rpc.ExecRequest_Command) *rpc.ExecRequest {
+	request := new(rpc.ExecRequest)
+	request.Type = &rpc.ExecRequest_Command_{Command: command}
+
+	return request
+}
+
+func newExecTestInputRequest(data []byte) *rpc.ExecRequest {
+	chunk := new(rpc.IOChunk)
+	chunk.Data = data
+
+	request := new(rpc.ExecRequest)
+	request.Type = &rpc.ExecRequest_StandardInput{StandardInput: chunk}
+
+	return request
+}
+
+func newExecTestSignal(requestID uint64, signal uint32, all bool) *rpc.ExecRequest_Signal {
+	request := new(rpc.ExecRequest_Signal)
+	request.RequestId = requestID
+	request.Signal = signal
+	request.All = all
+
+	return request
+}
+
+func newExecTestSignalRequest(signal *rpc.ExecRequest_Signal) *rpc.ExecRequest {
+	request := new(rpc.ExecRequest)
+	request.Type = &rpc.ExecRequest_Signal_{Signal: signal}
+
+	return request
+}
+
+func newExecTestTerminalSize(rows, cols uint32) *rpc.TerminalSize {
+	size := new(rpc.TerminalSize)
+	size.Rows = rows
+	size.Cols = cols
+
+	return size
+}
+
+func startExecTest(
+	t *testing.T,
+	connection *grpc.ClientConn,
+	command *rpc.ExecRequest_Command,
+) (grpc.BidiStreamingClient[rpc.ExecRequest, rpc.ExecResponse], *rpc.ExecResponse_Started) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), execTestTimeout)
 	t.Cleanup(cancel)
 
-	stream, err := client.Exec(ctx)
-	if err != nil {
-		t.Fatalf("open exec stream: %v", err)
-	}
-	if err := stream.Send(&ExecRequest{
-		Type: &ExecRequest_Command_{Command: command},
-	}); err != nil {
-		t.Fatalf("send exec command: %v", err)
-	}
+	stream, err := rpc.NewAgentClient(connection).Exec(ctx)
+	require.NoError(t, err, "open exec stream")
+
+	err = stream.Send(newExecTestCommandRequest(command))
+	require.NoError(t, err, "send exec command")
 
 	response, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("receive first exec response: %v", err)
-	}
+	require.NoError(t, err, "receive first exec response")
+
 	started := response.GetStarted()
-	if started == nil {
-		t.Fatalf("first exec response = %T, want Started", response.GetType())
-	}
-	if started.Pid == 0 {
-		t.Fatal("Started contains a zero process ID")
-	}
+	require.NotNil(t, started, "first exec response must be Started")
+	require.NotZero(t, started.GetPid(), "Started must contain the managed process ID")
 
 	return stream, started
 }
 
-func addExecTestResponse(t *testing.T, result *execTestResult, response *ExecResponse) bool {
+func addExecTestResponse(t *testing.T, result *execTestResult, response *rpc.ExecResponse) bool {
 	t.Helper()
 
 	switch event := response.GetType().(type) {
-	case *ExecResponse_StandardOutput:
-		_, _ = result.stdout.Write(event.StandardOutput.Data)
-	case *ExecResponse_StandardError:
-		_, _ = result.stderr.Write(event.StandardError.Data)
-	case *ExecResponse_SignalAck_:
-		result.acks = append(result.acks, event.SignalAck.RequestId)
-	case *ExecResponse_Exit_:
-		result.exit = event.Exit.Code
+	case *rpc.ExecResponse_StandardOutput:
+		_, _ = result.stdout.Write(event.StandardOutput.GetData())
+	case *rpc.ExecResponse_StandardError:
+		_, _ = result.stderr.Write(event.StandardError.GetData())
+	case *rpc.ExecResponse_SignalAck_:
+		result.acks = append(result.acks, event.SignalAck.GetRequestId())
+	case *rpc.ExecResponse_Exit_:
+		result.exit = event.Exit.GetCode()
+
 		return true
 	default:
 		t.Fatalf("unexpected exec response: %T", event)
@@ -124,223 +178,184 @@ func addExecTestResponse(t *testing.T, result *execTestResult, response *ExecRes
 	return false
 }
 
-func finishExecTest(t *testing.T, stream grpc.BidiStreamingClient[ExecRequest, ExecResponse],
+func finishExecTest(
+	t *testing.T,
+	stream grpc.BidiStreamingClient[rpc.ExecRequest, rpc.ExecResponse],
 	result *execTestResult,
 ) {
 	t.Helper()
 
 	for {
 		response, err := stream.Recv()
-		if err != nil {
-			t.Fatalf("receive exec response: %v", err)
-		}
+		require.NoError(t, err, "receive exec response")
+
 		if addExecTestResponse(t, result, response) {
 			break
 		}
 	}
 
-	if response, err := stream.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("response after Exit = %v, %v; want EOF", response, err)
-	}
+	_, err := stream.Recv()
+	require.ErrorIs(t, err, io.EOF, "the final Exit must be the last response")
 }
 
-func waitForExecOutput(t *testing.T, stream grpc.BidiStreamingClient[ExecRequest, ExecResponse],
-	result *execTestResult, text string,
+func waitForExecOutput(
+	t *testing.T,
+	stream grpc.BidiStreamingClient[rpc.ExecRequest, rpc.ExecResponse],
+	result *execTestResult,
+	text string,
 ) {
 	t.Helper()
 
 	for !strings.Contains(result.stdout.String(), text) {
 		response, err := stream.Recv()
-		if err != nil {
-			t.Fatalf("wait for output %q: %v", text, err)
-		}
-		if addExecTestResponse(t, result, response) {
-			t.Fatalf("process exited before producing %q; stdout = %q", text, result.stdout.String())
-		}
+		require.NoError(t, err, "wait for process output")
+		require.False(t, addExecTestResponse(t, result, response),
+			"process exited before producing %q; stdout = %q", text, result.stdout.String())
 	}
 }
 
-func sendExecTestSignal(t *testing.T, stream grpc.BidiStreamingClient[ExecRequest, ExecResponse],
-	requestID uint64, signal syscall.Signal, all bool,
+func sendExecTestSignal(
+	t *testing.T,
+	stream grpc.BidiStreamingClient[rpc.ExecRequest, rpc.ExecResponse],
+	requestID uint64,
+	signal syscall.Signal,
+	all bool,
 ) {
 	t.Helper()
 
-	if err := stream.Send(&ExecRequest{
-		Type: &ExecRequest_Signal_{
-			Signal: &ExecRequest_Signal{
-				RequestId: requestID,
-				Signal:    uint32(signal),
-				All:       all,
-			},
-		},
-	}); err != nil {
-		t.Fatalf("send signal request %d: %v", requestID, err)
-	}
+	request := newExecTestSignal(requestID, uint32(signal), all)
+	err := stream.Send(newExecTestSignalRequest(request))
+	require.NoError(t, err, "send signal request %d", requestID)
 }
 
 func TestExecStartedContainsRealPIDAndPrecedesOutput(t *testing.T) {
-	_, client := newExecTestClient(t)
-	stream, started := startExecTest(t, client, &ExecRequest_Command{
-		Name: "sh",
-		Args: []string{"-c", `printf '%s\n' "$$"; printf 'standard-error\n' >&2`},
-	})
+	connection := newExecTestConnection(t)
+	command := newExecTestCommand(`printf '%s\n' "$$"; printf 'standard-error\n' >&2`)
+	stream, started := startExecTest(t, connection, command)
 
 	var result execTestResult
+
 	finishExecTest(t, stream, &result)
 
 	actualPID, err := strconv.ParseUint(strings.TrimSpace(result.stdout.String()), 10, 32)
-	if err != nil {
-		t.Fatalf("parse managed shell PID %q: %v", result.stdout.String(), err)
-	}
-	if started.Pid != uint32(actualPID) {
-		t.Fatalf("Started PID = %d, actual guest process PID = %d", started.Pid, actualPID)
-	}
-	if got := result.stderr.String(); got != "standard-error\n" {
-		t.Fatalf("standard error = %q, want %q", got, "standard-error\n")
-	}
-	if result.exit != 0 {
-		t.Fatalf("exit code = %d, want 0", result.exit)
-	}
+	require.NoError(t, err, "parse the managed shell PID")
+	require.Equal(t, uint32(actualPID), started.GetPid())
+	require.Equal(t, "standard-error\n", result.stderr.String())
+	require.Zero(t, result.exit)
 }
 
 func TestExecStartedPrecedesFastCommandOutput(t *testing.T) {
-	_, client := newExecTestClient(t)
+	connection := newExecTestConnection(t)
 
 	for iteration := range 24 {
 		t.Run(fmt.Sprintf("command-%02d", iteration), func(t *testing.T) {
-			stream, _ := startExecTest(t, client, &ExecRequest_Command{
-				Name: "sh",
-				Args: []string{"-c", "printf fast"},
-			})
+			stream, _ := startExecTest(t, connection, newExecTestCommand("printf fast"))
 
 			var result execTestResult
+
 			finishExecTest(t, stream, &result)
-			if got := result.stdout.String(); got != "fast" {
-				t.Fatalf("standard output = %q, want %q", got, "fast")
-			}
-			if result.exit != 0 {
-				t.Fatalf("exit code = %d, want 0", result.exit)
-			}
+			require.Equal(t, "fast", result.stdout.String())
+			require.Zero(t, result.exit)
 		})
 	}
 }
 
 func TestExecSerializesConcurrentStandardStreams(t *testing.T) {
-	_, client := newExecTestClient(t)
-	stream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name: "sh",
-		Args: []string{"-c", `i=0; while [ "$i" -lt 128 ]; do printf 'out-%s\n' "$i"; printf 'err-%s\n' "$i" >&2; i=$((i + 1)); done`},
-	})
+	connection := newExecTestConnection(t)
+	command := newExecTestCommand(
+		`i=0; while [ "$i" -lt 128 ]; do ` +
+			`printf 'out-%s\n' "$i"; printf 'err-%s\n' "$i" >&2; i=$((i + 1)); done`,
+	)
+	stream, _ := startExecTest(t, connection, command)
 
 	var result execTestResult
-	finishExecTest(t, stream, &result)
 
-	if got := strings.Count(result.stdout.String(), "\n"); got != 128 {
-		t.Fatalf("standard output line count = %d, want 128", got)
-	}
-	if got := strings.Count(result.stderr.String(), "\n"); got != 128 {
-		t.Fatalf("standard error line count = %d, want 128", got)
-	}
-	if result.exit != 0 {
-		t.Fatalf("exit code = %d, want 0", result.exit)
-	}
+	finishExecTest(t, stream, &result)
+	assertStreamLineCount(t, result.stdout.String())
+	assertStreamLineCount(t, result.stderr.String())
+	require.Zero(t, result.exit)
+}
+
+func assertStreamLineCount(t *testing.T, output string) {
+	t.Helper()
+
+	require.Equal(t, 128, strings.Count(output, "\n"))
 }
 
 func TestExecPreservesEnvironmentAndWorkingDirectory(t *testing.T) {
-	_, client := newExecTestClient(t)
+	connection := newExecTestConnection(t)
 	workdir := t.TempDir()
 	resolvedWorkdir, err := filepath.EvalSymlinks(workdir)
-	if err != nil {
-		t.Fatalf("resolve test working directory: %v", err)
-	}
-	stream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name:    "sh",
-		Args:    []string{"-c", `printf '%s:%s' "$TART_EXEC_LIFECYCLE_TEST" "$PWD"`},
-		Env:     map[string]string{"TART_EXEC_LIFECYCLE_TEST": "preserved"},
-		Workdir: workdir,
-	})
+	require.NoError(t, err, "resolve test working directory")
+
+	command := newExecTestCommand(`printf '%s:%s' "$TART_EXEC_LIFECYCLE_TEST" "$PWD"`)
+	command.Env = map[string]string{"TART_EXEC_LIFECYCLE_TEST": "preserved"}
+	command.Workdir = workdir
+
+	stream, _ := startExecTest(t, connection, command)
 
 	var result execTestResult
-	finishExecTest(t, stream, &result)
 
-	if got, want := result.stdout.String(), "preserved:"+resolvedWorkdir; got != want {
-		t.Fatalf("environment and workdir = %q, want %q", got, want)
-	}
-	if result.exit != 0 {
-		t.Fatalf("exit code = %d, want 0", result.exit)
-	}
+	finishExecTest(t, stream, &result)
+	require.Equal(t, "preserved:"+resolvedWorkdir, result.stdout.String())
+	require.Zero(t, result.exit)
 }
 
 func TestExecInteractiveStandardInputAndEOF(t *testing.T) {
-	_, client := newExecTestClient(t)
-	stream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name:        "sh",
-		Args:        []string{"-c", "cat"},
-		Interactive: true,
-	})
+	connection := newExecTestConnection(t)
+	command := newExecTestCommand("cat")
+	command.Interactive = true
+
+	stream, _ := startExecTest(t, connection, command)
 
 	for _, data := range [][]byte{[]byte("interactive input\n"), {}} {
-		if err := stream.Send(&ExecRequest{
-			Type: &ExecRequest_StandardInput{StandardInput: &IOChunk{Data: data}},
-		}); err != nil {
-			t.Fatalf("send standard input %q: %v", data, err)
-		}
+		err := stream.Send(newExecTestInputRequest(data))
+		require.NoError(t, err, "send standard input %q", data)
 	}
-	if err := stream.CloseSend(); err != nil {
-		t.Fatalf("half-close client stream: %v", err)
-	}
+
+	err := stream.CloseSend()
+	require.NoError(t, err, "half-close client stream")
 
 	var result execTestResult
-	finishExecTest(t, stream, &result)
 
-	if got := result.stdout.String(); got != "interactive input\n" {
-		t.Fatalf("standard output = %q, want %q", got, "interactive input\n")
-	}
-	if result.exit != 0 {
-		t.Fatalf("exit code = %d, want 0", result.exit)
-	}
+	finishExecTest(t, stream, &result)
+	require.Equal(t, "interactive input\n", result.stdout.String())
+	require.Zero(t, result.exit)
 }
 
 func TestExecInteractivePTYAndResize(t *testing.T) {
-	_, client := newExecTestClient(t)
-	stream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name:        "sh",
-		Args:        []string{"-c", `stty size; IFS= read -r line; stty size; printf 'input:%s\n' "$line"`},
-		Interactive: true,
-		Tty:         true,
-		TerminalSize: &TerminalSize{
-			Rows: 24,
-			Cols: 80,
-		},
-	})
+	connection := newExecTestConnection(t)
+	command := newExecTestCommand(
+		`stty size; IFS= read -r line; stty size; printf 'input:%s\n' "$line"`,
+	)
+	command.Interactive = true
+	command.Tty = true
+	command.TerminalSize = newExecTestTerminalSize(24, 80)
+
+	stream, _ := startExecTest(t, connection, command)
 
 	var result execTestResult
+
 	waitForExecOutput(t, stream, &result, "24 80")
 
-	if err := stream.Send(&ExecRequest{
-		Type: &ExecRequest_TerminalResize{
-			TerminalResize: &TerminalSize{Rows: 41, Cols: 101},
-		},
-	}); err != nil {
-		t.Fatalf("resize pseudo-terminal: %v", err)
-	}
-	if err := stream.Send(&ExecRequest{
-		Type: &ExecRequest_StandardInput{
-			StandardInput: &IOChunk{Data: []byte("hello from a tty\n")},
-		},
-	}); err != nil {
-		t.Fatalf("send pseudo-terminal input: %v", err)
+	resize := new(rpc.ExecRequest)
+	resize.Type = &rpc.ExecRequest_TerminalResize{
+		TerminalResize: newExecTestTerminalSize(41, 101),
 	}
 
+	err := stream.Send(resize)
+	require.NoError(t, err, "resize pseudo-terminal")
+
+	err = stream.Send(newExecTestInputRequest([]byte("hello from a tty\n")))
+	require.NoError(t, err, "send pseudo-terminal input")
+
 	finishExecTest(t, stream, &result)
+
 	for _, want := range []string{"24 80", "41 101", "input:hello from a tty"} {
-		if !strings.Contains(result.stdout.String(), want) {
-			t.Fatalf("pseudo-terminal output %q does not contain %q", result.stdout.String(), want)
-		}
+		require.Contains(t, result.stdout.String(), want)
 	}
-	if result.exit != 0 {
-		t.Fatalf("exit code = %d, want 0", result.exit)
-	}
+
+	require.Zero(t, result.exit)
 }
 
 func TestExecSignalAcknowledgesSuccessfulDelivery(t *testing.T) {
@@ -350,55 +365,42 @@ func TestExecSignalAcknowledgesSuccessfulDelivery(t *testing.T) {
 		all    bool
 		tty    bool
 	}{
-		{name: "process-SIGTERM", signal: syscall.SIGTERM},
-		{name: "process-SIGKILL", signal: syscall.SIGKILL},
-		{name: "group-SIGTERM", signal: syscall.SIGTERM, all: true},
-		{name: "group-SIGKILL", signal: syscall.SIGKILL, all: true},
+		{name: "process-SIGTERM", signal: syscall.SIGTERM, all: false, tty: false},
+		{name: "process-SIGKILL", signal: syscall.SIGKILL, all: false, tty: false},
+		{name: "group-SIGTERM", signal: syscall.SIGTERM, all: true, tty: false},
+		{name: "group-SIGKILL", signal: syscall.SIGKILL, all: true, tty: false},
 		{name: "pty-group-SIGTERM", signal: syscall.SIGTERM, all: true, tty: true},
 		{name: "pty-group-SIGKILL", signal: syscall.SIGKILL, all: true, tty: true},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, client := newExecTestClient(t)
-			stream, started := startExecTest(t, client, &ExecRequest_Command{
-				Name: "sh",
-				Args: []string{"-c", "exec sleep 30"},
-				Tty:  test.tty,
-			})
+			connection := newExecTestConnection(t)
+			command := newExecTestCommand(execTestSleepCommand)
+			command.Tty = test.tty
 
-			groupID, err := syscall.Getpgid(int(started.Pid))
-			if err != nil {
-				t.Fatalf("read managed process group: %v", err)
-			}
-			if groupID != int(started.Pid) {
-				t.Fatalf("managed process group = %d, want managed PID %d", groupID, started.Pid)
-			}
-			if groupID == syscall.Getpgrp() {
-				t.Fatal("managed process shares the agent's process group")
-			}
+			stream, started := startExecTest(t, connection, command)
+			groupID, err := syscall.Getpgid(int(started.GetPid()))
+			require.NoError(t, err, "read managed process group")
+			require.Equal(t, int(started.GetPid()), groupID)
+			require.NotEqual(t, syscall.Getpgrp(), groupID)
 
-			const requestID = 73
+			const requestID uint64 = 73
+
 			sendExecTestSignal(t, stream, requestID, test.signal, test.all)
 
 			var result execTestResult
+
 			finishExecTest(t, stream, &result)
-			if len(result.acks) != 1 || result.acks[0] != requestID {
-				t.Fatalf("signal acknowledgments = %v, want [%d]", result.acks, requestID)
-			}
-			if result.exit != -1 {
-				t.Fatalf("signaled exit code = %d, want -1", result.exit)
-			}
+			require.Equal(t, []uint64{requestID}, result.acks)
+			require.EqualValues(t, -1, result.exit)
 		})
 	}
 }
 
 func TestExecSignalRequestsAreCorrelated(t *testing.T) {
-	_, client := newExecTestClient(t)
-	stream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name: "sh",
-		Args: []string{"-c", "exec sleep 30"},
-	})
+	connection := newExecTestConnection(t)
+	stream, _ := startExecTest(t, connection, newExecTestCommand(execTestSleepCommand))
 
 	for _, request := range []struct {
 		id     uint64
@@ -408,68 +410,44 @@ func TestExecSignalRequestsAreCorrelated(t *testing.T) {
 		{id: 29, signal: syscall.SIGCONT},
 	} {
 		sendExecTestSignal(t, stream, request.id, request.signal, false)
+
 		response, err := stream.Recv()
-		if err != nil {
-			t.Fatalf("receive acknowledgment for request %d: %v", request.id, err)
-		}
-		if ack := response.GetSignalAck(); ack == nil || ack.RequestId != request.id {
-			t.Fatalf("acknowledgment = %v, want request_id %d", response, request.id)
-		}
+		require.NoError(t, err, "receive acknowledgment for request %d", request.id)
+
+		ack := response.GetSignalAck()
+		require.NotNil(t, ack)
+		require.Equal(t, request.id, ack.GetRequestId())
 	}
 
-	const finalRequestID = 47
+	const finalRequestID uint64 = 47
+
 	sendExecTestSignal(t, stream, finalRequestID, syscall.SIGTERM, false)
 
 	var result execTestResult
+
 	finishExecTest(t, stream, &result)
-	if len(result.acks) != 1 || result.acks[0] != finalRequestID {
-		t.Fatalf("final acknowledgments = %v, want [%d]", result.acks, finalRequestID)
-	}
-	if result.exit != -1 {
-		t.Fatalf("signaled exit code = %d, want -1", result.exit)
-	}
+	require.Equal(t, []uint64{finalRequestID}, result.acks)
+	require.EqualValues(t, -1, result.exit)
 }
 
-func TestExecSignalAllIsolatesSiblingExecutions(t *testing.T) {
-	_, client := newExecTestClient(t)
-	marker := filepath.Join(t.TempDir(), "group-terminated")
-	groupScript := `sh -c 'trap '"'"'printf terminated > "$1"; exit 0'"'"' TERM; printf "group-ready\n"; while :; do sleep 1; done' _ "$1" & wait`
-
-	groupStream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name: "sh",
-		Args: []string{"-c", groupScript, "group", marker},
-	})
-	var groupResult execTestResult
-	waitForExecOutput(t, groupStream, &groupResult, "group-ready")
-
-	siblingStream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name:        "sh",
-		Args:        []string{"-c", "cat"},
-		Interactive: true,
-	})
-
-	const groupRequestID = 101
-	sendExecTestSignal(t, groupStream, groupRequestID, syscall.SIGTERM, true)
-	finishExecTest(t, groupStream, &groupResult)
-	if len(groupResult.acks) != 1 || groupResult.acks[0] != groupRequestID {
-		t.Fatalf("group acknowledgments = %v, want [%d]", groupResult.acks, groupRequestID)
-	}
+func waitForGroupTermination(t *testing.T, root *os.Root) {
+	t.Helper()
 
 	deadline := time.NewTimer(3 * time.Second)
-	ticker := time.NewTicker(10 * time.Millisecond)
 	defer deadline.Stop()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
+
 	for {
-		contents, err := os.ReadFile(marker)
+		contents, err := root.ReadFile("group-terminated")
 		if err == nil {
-			if string(contents) != "terminated" {
-				t.Fatalf("group child marker = %q, want %q", contents, "terminated")
-			}
-			break
+			require.Equal(t, "terminated", string(contents))
+
+			return
 		}
-		if !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("read group child marker: %v", err)
-		}
+
+		require.ErrorIs(t, err, os.ErrNotExist, "read group child marker")
 
 		select {
 		case <-deadline.C:
@@ -477,264 +455,302 @@ func TestExecSignalAllIsolatesSiblingExecutions(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func TestExecSignalAllIsolatesSiblingExecutions(t *testing.T) {
+	connection := newExecTestConnection(t)
+	markerDir := t.TempDir()
+	markerRoot, err := os.OpenRoot(markerDir)
+	require.NoError(t, err, "open confined group-marker directory")
+
+	t.Cleanup(func() {
+		_ = markerRoot.Close()
+	})
+
+	marker := filepath.Join(markerDir, "group-terminated")
+	groupScript := `sh -c 'trap '"'"'printf terminated > "$1"; exit 0'"'"' TERM; ` +
+		`printf "group-ready\n"; while :; do sleep 1; done' _ "$1" & wait`
+	groupCommand := newExecTestCommand(groupScript)
+	groupCommand.Args = append(groupCommand.Args, "group", marker)
+
+	groupStream, _ := startExecTest(t, connection, groupCommand)
+
+	var groupResult execTestResult
+
+	waitForExecOutput(t, groupStream, &groupResult, "group-ready")
+
+	siblingCommand := newExecTestCommand("cat")
+	siblingCommand.Interactive = true
+
+	siblingStream, _ := startExecTest(t, connection, siblingCommand)
+
+	const groupRequestID uint64 = 101
+
+	sendExecTestSignal(t, groupStream, groupRequestID, syscall.SIGTERM, true)
+	finishExecTest(t, groupStream, &groupResult)
+	require.Equal(t, []uint64{groupRequestID}, groupResult.acks)
+
+	waitForGroupTermination(t, markerRoot)
 
 	for _, data := range [][]byte{[]byte("sibling still alive\n"), {}} {
-		if err := siblingStream.Send(&ExecRequest{
-			Type: &ExecRequest_StandardInput{StandardInput: &IOChunk{Data: data}},
-		}); err != nil {
-			t.Fatalf("write to isolated sibling execution: %v", err)
-		}
+		err = siblingStream.Send(newExecTestInputRequest(data))
+		require.NoError(t, err, "write to isolated sibling execution")
 	}
 
 	var siblingResult execTestResult
+
 	finishExecTest(t, siblingStream, &siblingResult)
-	if got := siblingResult.stdout.String(); got != "sibling still alive\n" {
-		t.Fatalf("sibling output = %q, want %q", got, "sibling still alive\n")
-	}
-	if siblingResult.exit != 0 {
-		t.Fatalf("sibling exit code = %d, want 0", siblingResult.exit)
-	}
+	require.Equal(t, "sibling still alive\n", siblingResult.stdout.String())
+	require.Zero(t, siblingResult.exit)
 }
 
 func TestExecRejectsInvalidSignalRequestsWithoutAcknowledging(t *testing.T) {
 	tests := []struct {
 		name    string
-		request *ExecRequest_Signal
+		request *rpc.ExecRequest_Signal
 	}{
 		{
 			name:    "missing-request-id",
-			request: &ExecRequest_Signal{Signal: uint32(syscall.SIGTERM)},
+			request: newExecTestSignal(0, uint32(syscall.SIGTERM), false),
 		},
 		{
 			name:    "zero-signal",
-			request: &ExecRequest_Signal{RequestId: 1},
+			request: newExecTestSignal(1, 0, false),
 		},
 		{
 			name:    "unsupported-signal",
-			request: &ExecRequest_Signal{RequestId: 1, Signal: ^uint32(0)},
+			request: newExecTestSignal(1, ^uint32(0), false),
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, client := newExecTestClient(t)
-			stream, _ := startExecTest(t, client, &ExecRequest_Command{
-				Name: "sh",
-				Args: []string{"-c", "exec sleep 30"},
-			})
+			connection := newExecTestConnection(t)
+			stream, _ := startExecTest(t, connection, newExecTestCommand(execTestSleepCommand))
 
-			if err := stream.Send(&ExecRequest{
-				Type: &ExecRequest_Signal_{Signal: test.request},
-			}); err != nil {
-				t.Fatalf("send invalid signal request: %v", err)
-			}
+			err := stream.Send(newExecTestSignalRequest(test.request))
+			require.NoError(t, err, "send invalid signal request")
 
-			for {
-				response, err := stream.Recv()
-				if err != nil {
-					if got := status.Code(err); got != codes.InvalidArgument {
-						t.Fatalf("invalid signal status = %v (%v), want InvalidArgument", got, err)
-					}
-					break
-				}
-				if ack := response.GetSignalAck(); ack != nil {
-					t.Fatalf("invalid request unexpectedly acknowledged: %v", ack)
-				}
-				if exit := response.GetExit(); exit != nil {
-					t.Fatalf("invalid request produced a successful exit event: %v", exit)
-				}
-			}
+			assertInvalidExecSignal(t, stream)
 		})
 	}
 }
 
+func assertInvalidExecSignal(
+	t *testing.T,
+	stream grpc.BidiStreamingClient[rpc.ExecRequest, rpc.ExecResponse],
+) {
+	t.Helper()
+
+	for {
+		response, err := stream.Recv()
+		if err != nil {
+			require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+			return
+		}
+
+		require.Nil(t, response.GetSignalAck(), "invalid request must not be acknowledged")
+		require.Nil(t, response.GetExit(), "invalid request must not produce a successful exit")
+	}
+}
+
 func TestExecRejectsReusedSignalRequestID(t *testing.T) {
-	_, client := newExecTestClient(t)
-	stream, _ := startExecTest(t, client, &ExecRequest_Command{
-		Name: "sh",
-		Args: []string{"-c", `trap '' USR1; printf ready; exec sleep 30`},
-	})
+	connection := newExecTestConnection(t)
+	command := newExecTestCommand(`trap '' USR1; printf ready; exec sleep 30`)
+	stream, _ := startExecTest(t, connection, command)
+
 	var result execTestResult
+
 	waitForExecOutput(t, stream, &result, "ready")
 
-	const requestID = 19
-	sendExecTestSignal(t, stream, requestID, syscall.SIGUSR1, false)
-	response, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("receive original signal acknowledgment: %v", err)
-	}
-	if ack := response.GetSignalAck(); ack == nil || ack.RequestId != requestID {
-		t.Fatalf("original acknowledgment = %v, want request_id %d", response, requestID)
-	}
+	const requestID uint64 = 19
 
 	sendExecTestSignal(t, stream, requestID, syscall.SIGUSR1, false)
-	for {
-		response, err = stream.Recv()
-		if err != nil {
-			if got := status.Code(err); got != codes.InvalidArgument {
-				t.Fatalf("reused request status = %v (%v), want InvalidArgument", got, err)
-			}
-			break
-		}
-		if ack := response.GetSignalAck(); ack != nil {
-			t.Fatalf("reused request unexpectedly acknowledged: %v", ack)
-		}
-	}
+
+	response, err := stream.Recv()
+	require.NoError(t, err, "receive original signal acknowledgment")
+
+	ack := response.GetSignalAck()
+	require.NotNil(t, ack)
+	require.Equal(t, requestID, ack.GetRequestId())
+
+	sendExecTestSignal(t, stream, requestID, syscall.SIGUSR1, false)
+	assertInvalidExecSignal(t, stream)
 }
 
 func TestExecDetachedRetainsLegacyExitOnlyResponse(t *testing.T) {
-	_, client := newExecTestClient(t)
+	connection := newExecTestConnection(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), execTestTimeout)
 	defer cancel()
 
-	stream, err := client.Exec(ctx)
-	if err != nil {
-		t.Fatalf("open detached exec stream: %v", err)
-	}
-	if err := stream.Send(&ExecRequest{
-		Type: &ExecRequest_Command_{
-			Command: &ExecRequest_Command{
-				Name:   "sh",
-				Args:   []string{"-c", "exit 0"},
-				Detach: true,
-			},
-		},
-	}); err != nil {
-		t.Fatalf("send detached command: %v", err)
-	}
+	stream, err := rpc.NewAgentClient(connection).Exec(ctx)
+	require.NoError(t, err, "open detached exec stream")
+
+	command := newExecTestCommand("exit 0")
+	command.Detach = true
+
+	err = stream.Send(newExecTestCommandRequest(command))
+	require.NoError(t, err, "send detached command")
 
 	response, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("receive detached exit: %v", err)
-	}
-	if exit := response.GetExit(); exit == nil || exit.Code != 0 {
-		t.Fatalf("first detached response = %v, want legacy exit code 0", response)
-	}
-	if response, err := stream.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("response after detached Exit = %v, %v; want EOF", response, err)
-	}
+	require.NoError(t, err, "receive detached exit")
+
+	exit := response.GetExit()
+	require.NotNil(t, exit, "the first detached response must remain Exit")
+	require.Zero(t, exit.GetCode())
+
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
 }
 
-func legacyExecDescriptors(t *testing.T) (protoreflect.MessageDescriptor, protoreflect.MessageDescriptor) {
+func retainLegacyFields(message *descriptorpb.DescriptorProto) {
+	fields := message.GetField()[:0]
+
+	for _, field := range message.GetField() {
+		if field.GetNumber() <= 3 {
+			fields = append(fields, field)
+		}
+	}
+
+	message.Field = fields
+}
+
+func retainLegacyNestedMessages(message *descriptorpb.DescriptorProto) {
+	nested := message.GetNestedType()[:0]
+
+	for _, child := range message.GetNestedType() {
+		if child.GetName() != "Signal" && child.GetName() != "Started" &&
+			child.GetName() != "SignalAck" {
+			nested = append(nested, child)
+		}
+	}
+
+	message.NestedType = nested
+}
+
+func legacyExecDescriptors(t *testing.T) *legacyExecDescriptorSet {
 	t.Helper()
 
-	file := proto.Clone(protodesc.ToFileDescriptorProto(File_rpc_agent_proto)).(*descriptorpb.FileDescriptorProto)
-	for _, message := range file.MessageType {
-		switch message.GetName() {
-		case "ExecRequest":
-			fields := message.Field[:0]
-			for _, field := range message.Field {
-				if field.GetNumber() <= 3 {
-					fields = append(fields, field)
-				}
-			}
-			message.Field = fields
+	file := protodesc.ToFileDescriptorProto(rpc.File_rpc_agent_proto)
 
-			nested := message.NestedType[:0]
-			for _, child := range message.NestedType {
-				if child.GetName() != "Signal" {
-					nested = append(nested, child)
-				}
-			}
-			message.NestedType = nested
-		case "ExecResponse":
-			fields := message.Field[:0]
-			for _, field := range message.Field {
-				if field.GetNumber() <= 3 {
-					fields = append(fields, field)
-				}
-			}
-			message.Field = fields
-
-			nested := message.NestedType[:0]
-			for _, child := range message.NestedType {
-				if child.GetName() == "Exit" {
-					nested = append(nested, child)
-				}
-			}
-			message.NestedType = nested
+	for _, message := range file.GetMessageType() {
+		if message.GetName() == "ExecRequest" || message.GetName() == "ExecResponse" {
+			retainLegacyFields(message)
+			retainLegacyNestedMessages(message)
 		}
 	}
 
 	legacy, err := protodesc.NewFile(file, protoregistry.GlobalFiles)
-	if err != nil {
-		t.Fatalf("build original Exec protocol descriptors: %v", err)
-	}
+	require.NoError(t, err, "build original Exec protocol descriptors")
 
-	return legacy.Messages().ByName("ExecRequest"), legacy.Messages().ByName("ExecResponse")
+	descriptors := new(legacyExecDescriptorSet)
+	descriptors.request = legacy.Messages().ByName("ExecRequest")
+	descriptors.response = legacy.Messages().ByName("ExecResponse")
+
+	return descriptors
 }
 
-func TestExecLegacyClientIgnoresStartedAndReceivesOriginalEvents(t *testing.T) {
-	connection, _ := newExecTestClient(t)
-	requestDescriptor, responseDescriptor := legacyExecDescriptors(t)
-	ctx, cancel := context.WithTimeout(context.Background(), execTestTimeout)
-	defer cancel()
+func newLegacyExecStream(
+	t *testing.T,
+	connection *grpc.ClientConn,
+	requestDescriptor protoreflect.MessageDescriptor,
+) *legacyExecStream {
+	t.Helper()
 
-	stream, err := connection.NewStream(ctx, &grpc.StreamDesc{
-		StreamName:    "Exec",
-		ServerStreams: true,
-		ClientStreams: true,
-	}, Agent_Exec_FullMethodName)
-	if err != nil {
-		t.Fatalf("open legacy exec stream: %v", err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), execTestTimeout)
+	t.Cleanup(cancel)
+
+	description := new(grpc.StreamDesc)
+	description.StreamName = "Exec"
+	description.ServerStreams = true
+	description.ClientStreams = true
+
+	stream, err := connection.NewStream(ctx, description, rpc.Agent_Exec_FullMethodName)
+	require.NoError(t, err, "open legacy exec stream")
 
 	request := dynamicpb.NewMessage(requestDescriptor)
 	commandField := requestDescriptor.Fields().ByName("command")
 	command := dynamicpb.NewMessage(commandField.Message())
 	command.Set(command.Descriptor().Fields().ByName("name"), protoreflect.ValueOfString("sh"))
+
 	args := command.Mutable(command.Descriptor().Fields().ByName("args")).List()
 	args.Append(protoreflect.ValueOfString("-c"))
 	args.Append(protoreflect.ValueOfString("printf legacy-output; printf legacy-error >&2"))
 	request.Set(commandField, protoreflect.ValueOfMessage(command))
-	if err := stream.SendMsg(request); err != nil {
-		t.Fatalf("send legacy-format command: %v", err)
-	}
 
-	first := dynamicpb.NewMessage(responseDescriptor)
-	if err := stream.RecvMsg(first); err != nil {
-		t.Fatalf("receive legacy-format Started: %v", err)
-	}
-	if field := first.WhichOneof(responseDescriptor.Oneofs().ByName("type")); field != nil {
-		t.Fatalf("legacy client recognized new Started event as %s", field.FullName())
-	}
-	if len(first.GetUnknown()) == 0 {
-		t.Fatal("legacy client did not retain the additive unknown Started field")
-	}
+	err = stream.SendMsg(request)
+	require.NoError(t, err, "send legacy-format command")
+
+	legacyStream := new(legacyExecStream)
+	legacyStream.stream = stream
+
+	return legacyStream
+}
+
+func assertLegacyStarted(
+	t *testing.T,
+	stream *legacyExecStream,
+	descriptor protoreflect.MessageDescriptor,
+) {
+	t.Helper()
+
+	first := dynamicpb.NewMessage(descriptor)
+	err := stream.stream.RecvMsg(first)
+	require.NoError(t, err, "receive legacy-format Started")
+	require.Nil(t, first.WhichOneof(descriptor.Oneofs().ByName("type")),
+		"legacy client must ignore the additive Started event")
+	require.NotEmpty(t, first.GetUnknown(),
+		"legacy client must retain the unknown Started field")
+}
+
+func readLegacyExecEvents(
+	t *testing.T,
+	stream *legacyExecStream,
+	descriptor protoreflect.MessageDescriptor,
+) {
+	t.Helper()
 
 	var stdout, stderr strings.Builder
+
 	for {
-		response := dynamicpb.NewMessage(responseDescriptor)
-		if err := stream.RecvMsg(response); err != nil {
-			t.Fatalf("receive legacy-format response: %v", err)
-		}
-		field := response.WhichOneof(responseDescriptor.Oneofs().ByName("type"))
+		response := dynamicpb.NewMessage(descriptor)
+		err := stream.stream.RecvMsg(response)
+		require.NoError(t, err, "receive legacy-format response")
+
+		field := response.WhichOneof(descriptor.Oneofs().ByName("type"))
 		if field == nil {
 			continue
 		}
 
 		event := response.Get(field).Message()
+
 		switch field.Name() {
 		case "standard_output":
 			_, _ = stdout.Write(event.Get(event.Descriptor().Fields().ByName("data")).Bytes())
 		case "standard_error":
 			_, _ = stderr.Write(event.Get(event.Descriptor().Fields().ByName("data")).Bytes())
 		case "exit":
-			if code := event.Get(event.Descriptor().Fields().ByName("code")).Int(); code != 0 {
-				t.Fatalf("legacy exit code = %d, want 0", code)
-			}
-			if got := stdout.String(); got != "legacy-output" {
-				t.Fatalf("legacy standard output = %q, want %q", got, "legacy-output")
-			}
-			if got := stderr.String(); got != "legacy-error" {
-				t.Fatalf("legacy standard error = %q, want %q", got, "legacy-error")
-			}
-			if err := stream.RecvMsg(dynamicpb.NewMessage(responseDescriptor)); !errors.Is(err, io.EOF) {
-				t.Fatalf("legacy response after Exit = %v, want EOF", err)
-			}
+			require.Zero(t, event.Get(event.Descriptor().Fields().ByName("code")).Int())
+			require.Equal(t, "legacy-output", stdout.String())
+			require.Equal(t, "legacy-error", stderr.String())
+
+			err = stream.stream.RecvMsg(dynamicpb.NewMessage(descriptor))
+			require.ErrorIs(t, err, io.EOF)
+
 			return
 		default:
 			t.Fatalf("unexpected legacy event %s", field.FullName())
 		}
 	}
+}
+
+func TestExecLegacyClientIgnoresStartedAndReceivesOriginalEvents(t *testing.T) {
+	connection := newExecTestConnection(t)
+	descriptors := legacyExecDescriptors(t)
+	stream := newLegacyExecStream(t, connection, descriptors.request)
+
+	assertLegacyStarted(t, stream, descriptors.response)
+	readLegacyExecEvents(t, stream, descriptors.response)
 }
