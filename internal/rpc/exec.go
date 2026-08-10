@@ -186,11 +186,17 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	}
 
 	go func() {
+		var stdinClosed bool
+
 		for {
 			request, err := stream.Recv()
 			if err != nil {
 				// Allow the client to close its sending side while continuing to receive responses
 				if errors.Is(err, io.EOF) {
+					if err := closeStdin(stdin, firstExecRequestCommand.Command.GetTty(), &stdinClosed); err != nil {
+						reportClientError(err)
+					}
+
 					return
 				}
 
@@ -209,29 +215,18 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					continue
 				}
 
-				dataToWrite := typedAction.StandardInput.Data
-
 				// Check if the remote client has received EOF on their standard input
 				if len(typedAction.StandardInput.Data) == 0 {
-					if firstExecRequestCommand.Command.Tty {
-						// When using pseudo-terminal, we can't simply close the
-						// standard input, as the file descriptor is shared for
-						// standard output and standard error too, so we send
-						// an EOF character instead
-						dataToWrite = []byte{eofChar}
-					} else {
-						// Close the standard input
-						if err := stdin.Close(); err != nil {
-							reportClientError(err)
+					if err := closeStdin(stdin, firstExecRequestCommand.Command.GetTty(), &stdinClosed); err != nil {
+						reportClientError(err)
 
-							return
-						}
-
-						continue
+						return
 					}
+
+					continue
 				}
 
-				if _, err := stdin.Write(dataToWrite); err != nil {
+				if _, err := stdin.Write(typedAction.StandardInput.GetData()); err != nil {
 					reportClientError(err)
 
 					return
@@ -380,6 +375,28 @@ func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
 
 		return err
 	}
+
+	return nil
+}
+
+func closeStdin(stdin io.WriteCloser, tty bool, closed *bool) error {
+	if stdin == nil || *closed {
+		return nil
+	}
+
+	if tty {
+		// When using pseudo-terminal, we can't simply close the
+		// standard input, as the file descriptor is shared for
+		// standard output and standard error too, so we send
+		// an EOF character instead
+		if _, err := stdin.Write([]byte{eofChar}); err != nil {
+			return err
+		}
+	} else if err := stdin.Close(); err != nil {
+		return err
+	}
+
+	*closed = true
 
 	return nil
 }

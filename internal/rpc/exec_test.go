@@ -97,6 +97,52 @@ func TestExecSendsStartedBeforeOutputAndExit(t *testing.T) {
 	}
 }
 
+func TestExecClosesStandardInputOnRequestStreamEOF(t *testing.T) {
+	_, stream, result := startExecTest(t, &ExecRequest_Command{
+		Name:        "/bin/cat",
+		Interactive: true,
+	})
+	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
+
+	stream.requests <- &ExecRequest{
+		Type: &ExecRequest_StandardInput{
+			StandardInput: &IOChunk{Data: []byte("hello")},
+		},
+	}
+	close(stream.requests)
+
+	response := receiveExecResponse(t, stream)
+	require.Equal(t, []byte("hello"), response.GetStandardOutput().GetData())
+	response = receiveExecResponse(t, stream)
+	require.EqualValues(t, 0, response.GetExit().GetCode())
+	require.NoError(t, receiveExecResult(t, result))
+}
+
+func TestExecClosesStandardInputOnEmptyChunk(t *testing.T) {
+	_, stream, result := startExecTest(t, &ExecRequest_Command{
+		Name:        "/bin/cat",
+		Interactive: true,
+	})
+	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
+
+	stream.requests <- &ExecRequest{
+		Type: &ExecRequest_StandardInput{
+			StandardInput: &IOChunk{Data: []byte("hello")},
+		},
+	}
+	stream.requests <- &ExecRequest{
+		Type: &ExecRequest_StandardInput{
+			StandardInput: &IOChunk{},
+		},
+	}
+
+	response := receiveExecResponse(t, stream)
+	require.Equal(t, []byte("hello"), response.GetStandardOutput().GetData())
+	response = receiveExecResponse(t, stream)
+	require.EqualValues(t, 0, response.GetExit().GetCode())
+	require.NoError(t, receiveExecResult(t, result))
+}
+
 func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 	tests := []struct {
 		name    string
