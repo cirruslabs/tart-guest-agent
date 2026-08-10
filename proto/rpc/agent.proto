@@ -29,6 +29,7 @@ message ExecRequest {
     bool detach = 6;
     map<string, string> env = 7;
     string workdir = 8;
+    string user = 9;
   }
 
   oneof type {

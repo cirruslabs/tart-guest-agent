@@ -529,6 +529,7 @@ type ExecRequest_Command struct {
 	Detach        bool                   `protobuf:"varint,6,opt,name=detach,proto3" json:"detach,omitempty"`
 	Env           map[string]string      `protobuf:"bytes,7,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Workdir       string                 `protobuf:"bytes,8,opt,name=workdir,proto3" json:"workdir,omitempty"`
+	User          string                 `protobuf:"bytes,9,opt,name=user,proto3" json:"user,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -619,6 +620,13 @@ func (x *ExecRequest_Command) GetWorkdir() string {
 	return ""
 }
 
+func (x *ExecRequest_Command) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
 type ExecResponse_Exit struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
@@ -703,7 +711,7 @@ var File_rpc_agent_proto protoreflect.FileDescriptor
 
 const file_rpc_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x0frpc/agent.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xb8\x05\n" +
+	"\x0frpc/agent.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xcc\x05\n" +
 	"\vExecRequest\x120\n" +
 	"\acommand\x18\x01 \x01(\v2\x14.ExecRequest.CommandH\x00R\acommand\x121\n" +
 	"\x0estandard_input\x18\x02 \x01(\v2\b.IOChunkH\x00R\rstandardInput\x128\n" +
@@ -716,7 +724,7 @@ const file_rpc_agent_proto_rawDesc = "" +
 	"\x06Signal\x12\x16\n" +
 	"\x12SIGNAL_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSIGNAL_SIGTERM\x10\x01\x12\x12\n" +
-	"\x0eSIGNAL_SIGKILL\x10\x02\x1a\xb4\x02\n" +
+	"\x0eSIGNAL_SIGKILL\x10\x02\x1a\xc8\x02\n" +
 	"\aCommand\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04args\x18\x02 \x03(\tR\x04args\x12 \n" +
@@ -725,7 +733,8 @@ const file_rpc_agent_proto_rawDesc = "" +
 	"\rterminal_size\x18\x05 \x01(\v2\r.TerminalSizeR\fterminalSize\x12\x16\n" +
 	"\x06detach\x18\x06 \x01(\bR\x06detach\x12/\n" +
 	"\x03env\x18\a \x03(\v2\x1d.ExecRequest.Command.EnvEntryR\x03env\x12\x18\n" +
-	"\aworkdir\x18\b \x01(\tR\aworkdir\x1a6\n" +
+	"\aworkdir\x18\b \x01(\tR\aworkdir\x12\x12\n" +
+	"\x04user\x18\t \x01(\tR\x04user\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x06\n" +

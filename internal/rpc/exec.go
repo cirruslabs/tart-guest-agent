@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	userpkg "os/user"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -57,12 +59,20 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 	cmd := exec.CommandContext(execCtx, firstExecRequestCommand.Command.Name,
 		firstExecRequestCommand.Command.Args...)
-	applyExecOverrides(cmd, firstExecRequestCommand.Command)
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+
+	if err := applyExecOverrides(cmd, firstExecRequestCommand.Command); err != nil {
+		zap.S().Warnf("failed to configure %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
+			firstExecRequestCommand.Command.GetArgs()), err)
+
+		return sendStartFailure(stream)
+	}
 
 	if firstExecRequestCommand.Command.Detach {
 		cmd.Stdout = io.Discard
 		cmd.Stderr = io.Discard
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.SysProcAttr.Setsid = true
 
 		if err := cmd.Start(); err != nil {
 			zap.S().Warnf("failed to start %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
@@ -117,7 +127,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		stderr = ptmx
 	} else {
 		// Start the command in its own process group so signals reach all descendants
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.SysProcAttr.Setpgid = true
 
 		if firstExecRequestCommand.Command.Interactive {
 			stdin, err = cmd.StdinPipe()
@@ -401,7 +411,7 @@ func sendStartFailure(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]
 	})
 }
 
-func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) {
+func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) error {
 	if command.Workdir != "" {
 		cmd.Dir = command.Workdir
 	}
@@ -409,6 +419,37 @@ func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) {
 	if len(command.Env) > 0 {
 		cmd.Env = mergeEnv(command.Env)
 	}
+
+	if user := command.GetUser(); user != "" {
+		selectedUser, err := userpkg.Lookup(user)
+		if err != nil {
+			return fmt.Errorf("failed to resolve user %q: %w", user, err)
+		}
+
+		uid, err := strconv.ParseUint(selectedUser.Uid, 10, 32)
+		if err != nil {
+			return fmt.Errorf("failed to parse UID %q for user %q: %w",
+				selectedUser.Uid, user, err)
+		}
+
+		gid, err := strconv.ParseUint(selectedUser.Gid, 10, 32)
+		if err != nil {
+			return fmt.Errorf("failed to parse GID %q for user %q: %w",
+				selectedUser.Gid, user, err)
+		}
+
+		if uint32(uid) == uint32(os.Geteuid()) && uint32(gid) == uint32(os.Getegid()) {
+			return nil
+		}
+
+		// Avoid changing credentials when the requested user is the same as guest agen't user
+		cmd.SysProcAttr.Credential = &syscall.Credential{
+			Uid: uint32(uid),
+			Gid: uint32(gid),
+		}
+	}
+
+	return nil
 }
 
 func mergeEnv(overrides map[string]string) []string {
