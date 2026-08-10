@@ -9,7 +9,7 @@ package rpc
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	_ "google.golang.org/protobuf/types/known/emptypb"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -22,53 +22,53 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ExecRequest_SendSignal_Signal int32
+type SignalRequest_Signal int32
 
 const (
-	ExecRequest_SendSignal_SIGNAL_UNSPECIFIED ExecRequest_SendSignal_Signal = 0
-	ExecRequest_SendSignal_SIGNAL_SIGTERM     ExecRequest_SendSignal_Signal = 1
-	ExecRequest_SendSignal_SIGNAL_SIGKILL     ExecRequest_SendSignal_Signal = 2
+	SignalRequest_SIGNAL_UNSPECIFIED SignalRequest_Signal = 0
+	SignalRequest_SIGNAL_SIGTERM     SignalRequest_Signal = 1
+	SignalRequest_SIGNAL_SIGKILL     SignalRequest_Signal = 2
 )
 
-// Enum value maps for ExecRequest_SendSignal_Signal.
+// Enum value maps for SignalRequest_Signal.
 var (
-	ExecRequest_SendSignal_Signal_name = map[int32]string{
+	SignalRequest_Signal_name = map[int32]string{
 		0: "SIGNAL_UNSPECIFIED",
 		1: "SIGNAL_SIGTERM",
 		2: "SIGNAL_SIGKILL",
 	}
-	ExecRequest_SendSignal_Signal_value = map[string]int32{
+	SignalRequest_Signal_value = map[string]int32{
 		"SIGNAL_UNSPECIFIED": 0,
 		"SIGNAL_SIGTERM":     1,
 		"SIGNAL_SIGKILL":     2,
 	}
 )
 
-func (x ExecRequest_SendSignal_Signal) Enum() *ExecRequest_SendSignal_Signal {
-	p := new(ExecRequest_SendSignal_Signal)
+func (x SignalRequest_Signal) Enum() *SignalRequest_Signal {
+	p := new(SignalRequest_Signal)
 	*p = x
 	return p
 }
 
-func (x ExecRequest_SendSignal_Signal) String() string {
+func (x SignalRequest_Signal) String() string {
 	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
 }
 
-func (ExecRequest_SendSignal_Signal) Descriptor() protoreflect.EnumDescriptor {
+func (SignalRequest_Signal) Descriptor() protoreflect.EnumDescriptor {
 	return file_rpc_agent_proto_enumTypes[0].Descriptor()
 }
 
-func (ExecRequest_SendSignal_Signal) Type() protoreflect.EnumType {
+func (SignalRequest_Signal) Type() protoreflect.EnumType {
 	return &file_rpc_agent_proto_enumTypes[0]
 }
 
-func (x ExecRequest_SendSignal_Signal) Number() protoreflect.EnumNumber {
+func (x SignalRequest_Signal) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
-// Deprecated: Use ExecRequest_SendSignal_Signal.Descriptor instead.
-func (ExecRequest_SendSignal_Signal) EnumDescriptor() ([]byte, []int) {
-	return file_rpc_agent_proto_rawDescGZIP(), []int{0, 0, 0}
+// Deprecated: Use SignalRequest_Signal.Descriptor instead.
+func (SignalRequest_Signal) EnumDescriptor() ([]byte, []int) {
+	return file_rpc_agent_proto_rawDescGZIP(), []int{6, 0}
 }
 
 type ExecRequest struct {
@@ -78,7 +78,6 @@ type ExecRequest struct {
 	//	*ExecRequest_Command_
 	//	*ExecRequest_StandardInput
 	//	*ExecRequest_TerminalResize
-	//	*ExecRequest_SendSignal_
 	Type          isExecRequest_Type `protobuf_oneof:"type"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -148,15 +147,6 @@ func (x *ExecRequest) GetTerminalResize() *TerminalSize {
 	return nil
 }
 
-func (x *ExecRequest) GetSendSignal() *ExecRequest_SendSignal {
-	if x != nil {
-		if x, ok := x.Type.(*ExecRequest_SendSignal_); ok {
-			return x.SendSignal
-		}
-	}
-	return nil
-}
-
 type isExecRequest_Type interface {
 	isExecRequest_Type()
 }
@@ -173,17 +163,11 @@ type ExecRequest_TerminalResize struct {
 	TerminalResize *TerminalSize `protobuf:"bytes,3,opt,name=terminal_resize,json=terminalResize,proto3,oneof"`
 }
 
-type ExecRequest_SendSignal_ struct {
-	SendSignal *ExecRequest_SendSignal `protobuf:"bytes,4,opt,name=send_signal,json=sendSignal,proto3,oneof"`
-}
-
 func (*ExecRequest_Command_) isExecRequest_Type() {}
 
 func (*ExecRequest_StandardInput) isExecRequest_Type() {}
 
 func (*ExecRequest_TerminalResize) isExecRequest_Type() {}
-
-func (*ExecRequest_SendSignal_) isExecRequest_Type() {}
 
 type ExecResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -475,27 +459,28 @@ func (x *ResolveIPResponse) GetIp() string {
 	return ""
 }
 
-type ExecRequest_SendSignal struct {
-	state         protoimpl.MessageState        `protogen:"open.v1"`
-	Signal        ExecRequest_SendSignal_Signal `protobuf:"varint,1,opt,name=signal,proto3,enum=ExecRequest_SendSignal_Signal" json:"signal,omitempty"`
+type SignalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExecId        string                 `protobuf:"bytes,1,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	Signal        SignalRequest_Signal   `protobuf:"varint,2,opt,name=signal,proto3,enum=SignalRequest_Signal" json:"signal,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ExecRequest_SendSignal) Reset() {
-	*x = ExecRequest_SendSignal{}
+func (x *SignalRequest) Reset() {
+	*x = SignalRequest{}
 	mi := &file_rpc_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExecRequest_SendSignal) String() string {
+func (x *SignalRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExecRequest_SendSignal) ProtoMessage() {}
+func (*SignalRequest) ProtoMessage() {}
 
-func (x *ExecRequest_SendSignal) ProtoReflect() protoreflect.Message {
+func (x *SignalRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_rpc_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -507,16 +492,23 @@ func (x *ExecRequest_SendSignal) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExecRequest_SendSignal.ProtoReflect.Descriptor instead.
-func (*ExecRequest_SendSignal) Descriptor() ([]byte, []int) {
-	return file_rpc_agent_proto_rawDescGZIP(), []int{0, 0}
+// Deprecated: Use SignalRequest.ProtoReflect.Descriptor instead.
+func (*SignalRequest) Descriptor() ([]byte, []int) {
+	return file_rpc_agent_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *ExecRequest_SendSignal) GetSignal() ExecRequest_SendSignal_Signal {
+func (x *SignalRequest) GetExecId() string {
+	if x != nil {
+		return x.ExecId
+	}
+	return ""
+}
+
+func (x *SignalRequest) GetSignal() SignalRequest_Signal {
 	if x != nil {
 		return x.Signal
 	}
-	return ExecRequest_SendSignal_SIGNAL_UNSPECIFIED
+	return SignalRequest_SIGNAL_UNSPECIFIED
 }
 
 type ExecRequest_Command struct {
@@ -561,7 +553,7 @@ func (x *ExecRequest_Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest_Command.ProtoReflect.Descriptor instead.
 func (*ExecRequest_Command) Descriptor() ([]byte, []int) {
-	return file_rpc_agent_proto_rawDescGZIP(), []int{0, 1}
+	return file_rpc_agent_proto_rawDescGZIP(), []int{0, 0}
 }
 
 func (x *ExecRequest_Command) GetName() string {
@@ -673,6 +665,7 @@ func (x *ExecResponse_Exit) GetCode() int32 {
 
 type ExecResponse_Started struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExecId        string                 `protobuf:"bytes,1,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -707,24 +700,22 @@ func (*ExecResponse_Started) Descriptor() ([]byte, []int) {
 	return file_rpc_agent_proto_rawDescGZIP(), []int{1, 1}
 }
 
+func (x *ExecResponse_Started) GetExecId() string {
+	if x != nil {
+		return x.ExecId
+	}
+	return ""
+}
+
 var File_rpc_agent_proto protoreflect.FileDescriptor
 
 const file_rpc_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x0frpc/agent.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xcc\x05\n" +
+	"\x0frpc/agent.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xff\x03\n" +
 	"\vExecRequest\x120\n" +
 	"\acommand\x18\x01 \x01(\v2\x14.ExecRequest.CommandH\x00R\acommand\x121\n" +
 	"\x0estandard_input\x18\x02 \x01(\v2\b.IOChunkH\x00R\rstandardInput\x128\n" +
-	"\x0fterminal_resize\x18\x03 \x01(\v2\r.TerminalSizeH\x00R\x0eterminalResize\x12:\n" +
-	"\vsend_signal\x18\x04 \x01(\v2\x17.ExecRequest.SendSignalH\x00R\n" +
-	"sendSignal\x1a\x8e\x01\n" +
-	"\n" +
-	"SendSignal\x126\n" +
-	"\x06signal\x18\x01 \x01(\x0e2\x1e.ExecRequest.SendSignal.SignalR\x06signal\"H\n" +
-	"\x06Signal\x12\x16\n" +
-	"\x12SIGNAL_UNSPECIFIED\x10\x00\x12\x12\n" +
-	"\x0eSIGNAL_SIGTERM\x10\x01\x12\x12\n" +
-	"\x0eSIGNAL_SIGKILL\x10\x02\x1a\xc8\x02\n" +
+	"\x0fterminal_resize\x18\x03 \x01(\v2\r.TerminalSizeH\x00R\x0eterminalResize\x1a\xc8\x02\n" +
 	"\aCommand\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04args\x18\x02 \x03(\tR\x04args\x12 \n" +
@@ -738,15 +729,16 @@ const file_rpc_agent_proto_rawDesc = "" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x06\n" +
-	"\x04type\"\x82\x02\n" +
+	"\x04type\"\x9b\x02\n" +
 	"\fExecResponse\x12(\n" +
 	"\x04exit\x18\x01 \x01(\v2\x12.ExecResponse.ExitH\x00R\x04exit\x123\n" +
 	"\x0fstandard_output\x18\x02 \x01(\v2\b.IOChunkH\x00R\x0estandardOutput\x121\n" +
 	"\x0estandard_error\x18\x03 \x01(\v2\b.IOChunkH\x00R\rstandardError\x121\n" +
 	"\astarted\x18\x04 \x01(\v2\x15.ExecResponse.StartedH\x00R\astarted\x1a\x1a\n" +
 	"\x04Exit\x12\x12\n" +
-	"\x04code\x18\x01 \x01(\x05R\x04code\x1a\t\n" +
-	"\aStartedB\x06\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x1a\"\n" +
+	"\aStarted\x12\x17\n" +
+	"\aexec_id\x18\x01 \x01(\tR\x06execIdB\x06\n" +
 	"\x04type\"6\n" +
 	"\fTerminalSize\x12\x12\n" +
 	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
@@ -755,9 +747,17 @@ const file_rpc_agent_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\fR\x04data\"\x12\n" +
 	"\x10ResolveIPRequest\"#\n" +
 	"\x11ResolveIPResponse\x12\x0e\n" +
-	"\x02ip\x18\x01 \x01(\tR\x02ip2d\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\"\xa1\x01\n" +
+	"\rSignalRequest\x12\x17\n" +
+	"\aexec_id\x18\x01 \x01(\tR\x06execId\x12-\n" +
+	"\x06signal\x18\x02 \x01(\x0e2\x15.SignalRequest.SignalR\x06signal\"H\n" +
+	"\x06Signal\x12\x16\n" +
+	"\x12SIGNAL_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eSIGNAL_SIGTERM\x10\x01\x12\x12\n" +
+	"\x0eSIGNAL_SIGKILL\x10\x022\x96\x01\n" +
 	"\x05Agent\x12'\n" +
-	"\x04Exec\x12\f.ExecRequest\x1a\r.ExecResponse(\x010\x01\x122\n" +
+	"\x04Exec\x12\f.ExecRequest\x1a\r.ExecResponse(\x010\x01\x120\n" +
+	"\x06Signal\x12\x0e.SignalRequest\x1a\x16.google.protobuf.Empty\x122\n" +
 	"\tResolveIP\x12\x11.ResolveIPRequest\x1a\x12.ResolveIPResponseB5Z3github.com/cirruslabs/tart-guest-agent/internal/rpcb\x06proto3"
 
 var (
@@ -775,40 +775,42 @@ func file_rpc_agent_proto_rawDescGZIP() []byte {
 var file_rpc_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_rpc_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_rpc_agent_proto_goTypes = []any{
-	(ExecRequest_SendSignal_Signal)(0), // 0: ExecRequest.SendSignal.Signal
-	(*ExecRequest)(nil),                // 1: ExecRequest
-	(*ExecResponse)(nil),               // 2: ExecResponse
-	(*TerminalSize)(nil),               // 3: TerminalSize
-	(*IOChunk)(nil),                    // 4: IOChunk
-	(*ResolveIPRequest)(nil),           // 5: ResolveIPRequest
-	(*ResolveIPResponse)(nil),          // 6: ResolveIPResponse
-	(*ExecRequest_SendSignal)(nil),     // 7: ExecRequest.SendSignal
-	(*ExecRequest_Command)(nil),        // 8: ExecRequest.Command
-	nil,                                // 9: ExecRequest.Command.EnvEntry
-	(*ExecResponse_Exit)(nil),          // 10: ExecResponse.Exit
-	(*ExecResponse_Started)(nil),       // 11: ExecResponse.Started
+	(SignalRequest_Signal)(0),    // 0: SignalRequest.Signal
+	(*ExecRequest)(nil),          // 1: ExecRequest
+	(*ExecResponse)(nil),         // 2: ExecResponse
+	(*TerminalSize)(nil),         // 3: TerminalSize
+	(*IOChunk)(nil),              // 4: IOChunk
+	(*ResolveIPRequest)(nil),     // 5: ResolveIPRequest
+	(*ResolveIPResponse)(nil),    // 6: ResolveIPResponse
+	(*SignalRequest)(nil),        // 7: SignalRequest
+	(*ExecRequest_Command)(nil),  // 8: ExecRequest.Command
+	nil,                          // 9: ExecRequest.Command.EnvEntry
+	(*ExecResponse_Exit)(nil),    // 10: ExecResponse.Exit
+	(*ExecResponse_Started)(nil), // 11: ExecResponse.Started
+	(*emptypb.Empty)(nil),        // 12: google.protobuf.Empty
 }
 var file_rpc_agent_proto_depIdxs = []int32{
 	8,  // 0: ExecRequest.command:type_name -> ExecRequest.Command
 	4,  // 1: ExecRequest.standard_input:type_name -> IOChunk
 	3,  // 2: ExecRequest.terminal_resize:type_name -> TerminalSize
-	7,  // 3: ExecRequest.send_signal:type_name -> ExecRequest.SendSignal
-	10, // 4: ExecResponse.exit:type_name -> ExecResponse.Exit
-	4,  // 5: ExecResponse.standard_output:type_name -> IOChunk
-	4,  // 6: ExecResponse.standard_error:type_name -> IOChunk
-	11, // 7: ExecResponse.started:type_name -> ExecResponse.Started
-	0,  // 8: ExecRequest.SendSignal.signal:type_name -> ExecRequest.SendSignal.Signal
-	3,  // 9: ExecRequest.Command.terminal_size:type_name -> TerminalSize
-	9,  // 10: ExecRequest.Command.env:type_name -> ExecRequest.Command.EnvEntry
-	1,  // 11: Agent.Exec:input_type -> ExecRequest
+	10, // 3: ExecResponse.exit:type_name -> ExecResponse.Exit
+	4,  // 4: ExecResponse.standard_output:type_name -> IOChunk
+	4,  // 5: ExecResponse.standard_error:type_name -> IOChunk
+	11, // 6: ExecResponse.started:type_name -> ExecResponse.Started
+	0,  // 7: SignalRequest.signal:type_name -> SignalRequest.Signal
+	3,  // 8: ExecRequest.Command.terminal_size:type_name -> TerminalSize
+	9,  // 9: ExecRequest.Command.env:type_name -> ExecRequest.Command.EnvEntry
+	1,  // 10: Agent.Exec:input_type -> ExecRequest
+	7,  // 11: Agent.Signal:input_type -> SignalRequest
 	5,  // 12: Agent.ResolveIP:input_type -> ResolveIPRequest
 	2,  // 13: Agent.Exec:output_type -> ExecResponse
-	6,  // 14: Agent.ResolveIP:output_type -> ResolveIPResponse
-	13, // [13:15] is the sub-list for method output_type
-	11, // [11:13] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 14: Agent.Signal:output_type -> google.protobuf.Empty
+	6,  // 15: Agent.ResolveIP:output_type -> ResolveIPResponse
+	13, // [13:16] is the sub-list for method output_type
+	10, // [10:13] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_rpc_agent_proto_init() }
@@ -820,7 +822,6 @@ func file_rpc_agent_proto_init() {
 		(*ExecRequest_Command_)(nil),
 		(*ExecRequest_StandardInput)(nil),
 		(*ExecRequest_TerminalResize)(nil),
-		(*ExecRequest_SendSignal_)(nil),
 	}
 	file_rpc_agent_proto_msgTypes[1].OneofWrappers = []any{
 		(*ExecResponse_Exit_)(nil),

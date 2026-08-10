@@ -72,7 +72,7 @@ func (stream *execTestStream) Recv() (*ExecRequest, error) {
 func (stream *execTestStream) Context() context.Context { return stream.ctx }
 
 func TestExecSendsStartedBeforeOutputAndExit(t *testing.T) {
-	stream, result := startExecTest(t, &ExecRequest_Command{
+	_, stream, result := startExecTest(t, &ExecRequest_Command{
 		Name: execTestShell,
 		Args: []string{"-c", "printf hello"},
 	})
@@ -119,7 +119,7 @@ func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			stream, result := startExecTest(t, test.command)
+			_, stream, result := startExecTest(t, test.command)
 			response := receiveExecResponse(t, stream)
 			require.Nil(t, response.GetStarted())
 			require.EqualValues(t, execRuntimeFailureExitCode, response.GetExit().GetCode())
@@ -131,45 +131,54 @@ func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 func TestExecSignalsProcess(t *testing.T) {
 	tests := []struct {
 		name   string
-		signal ExecRequest_SendSignal_Signal
+		signal SignalRequest_Signal
 		code   int32
 		err    string
 	}{
 		{
 			name:   "SIGTERM",
-			signal: ExecRequest_SendSignal_SIGNAL_SIGTERM,
+			signal: SignalRequest_SIGNAL_SIGTERM,
 			code:   int32(signalExitCodeOffset + syscall.SIGTERM),
 		},
 		{
 			name:   "SIGKILL",
-			signal: ExecRequest_SendSignal_SIGNAL_SIGKILL,
+			signal: SignalRequest_SIGNAL_SIGKILL,
 			code:   int32(signalExitCodeOffset + syscall.SIGKILL),
 		},
 		{
 			name:   "unsupported",
-			signal: ExecRequest_SendSignal_SIGNAL_UNSPECIFIED,
+			signal: SignalRequest_SIGNAL_UNSPECIFIED,
 			err:    `unsupported exec signal "SIGNAL_UNSPECIFIED"`,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			stream, result := startExecTest(t, &ExecRequest_Command{
+			rpc, stream, result := startExecTest(t, &ExecRequest_Command{
 				Name: "/bin/sleep",
 				Args: []string{"30"},
 			})
-			require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
+			started := receiveExecResponse(t, stream).GetStarted()
+			require.NotNil(t, started)
 
-			stream.requests <- &ExecRequest{
-				Type: &ExecRequest_SendSignal_{
-					SendSignal: &ExecRequest_SendSignal{Signal: test.signal},
-				},
-			}
+			_, err := rpc.Signal(context.Background(), &SignalRequest{
+				ExecId: started.GetExecId(),
+				Signal: test.signal,
+			})
 
 			if test.err != "" {
-				require.EqualError(t, receiveExecResult(t, result), test.err)
+				require.EqualError(t, err, test.err)
+				_, err = rpc.Signal(context.Background(), &SignalRequest{
+					ExecId: started.GetExecId(),
+					Signal: SignalRequest_SIGNAL_SIGKILL,
+				})
+				require.NoError(t, err)
+				receiveExecResponse(t, stream)
+				require.NoError(t, receiveExecResult(t, result))
+
 				return
 			}
+			require.NoError(t, err)
 
 			response := receiveExecResponse(t, stream)
 			require.NotNil(t, response.GetExit())
@@ -180,18 +189,19 @@ func TestExecSignalsProcess(t *testing.T) {
 }
 
 func TestExecSignalsProcessGroup(t *testing.T) {
-	stream, result := startExecTest(t, &ExecRequest_Command{
+	rpc, stream, result := startExecTest(t, &ExecRequest_Command{
 		Name: execTestShell,
 		Args: []string{"-c", "sleep 30 & printf ready; wait"},
 	})
-	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
+	started := receiveExecResponse(t, stream).GetStarted()
+	require.NotNil(t, started)
 	require.Equal(t, []byte("ready"), receiveExecResponse(t, stream).GetStandardOutput().GetData())
 
-	stream.requests <- &ExecRequest{
-		Type: &ExecRequest_SendSignal_{
-			SendSignal: &ExecRequest_SendSignal{Signal: ExecRequest_SendSignal_SIGNAL_SIGTERM},
-		},
-	}
+	_, err := rpc.Signal(context.Background(), &SignalRequest{
+		ExecId: started.GetExecId(),
+		Signal: SignalRequest_SIGNAL_SIGTERM,
+	})
+	require.NoError(t, err)
 
 	response := receiveExecResponse(t, stream)
 	require.EqualValues(t, signalExitCodeOffset+syscall.SIGTERM, response.GetExit().GetCode())
@@ -203,7 +213,7 @@ func TestExecReapsProcessWhenStartedCannotBeSent(t *testing.T) {
 	sendErr := errors.New("failed to send Started")
 	var processPID int
 
-	_, result := startExecTest(t, &ExecRequest_Command{
+	_, _, result := startExecTest(t, &ExecRequest_Command{
 		Name: execTestShell,
 		Args: []string{"-c", `printf %d "$$" > "$PID_FILE"; exec sleep 30`},
 		Env:  map[string]string{"PID_FILE": pidPath},
@@ -231,7 +241,7 @@ func startExecTest(
 	t *testing.T,
 	command *ExecRequest_Command,
 	configure ...func(*execTestStream),
-) (*execTestStream, <-chan error) {
+) (*RPC, *execTestStream, <-chan error) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -240,14 +250,16 @@ func startExecTest(
 	for _, configureStream := range configure {
 		configureStream(stream)
 	}
+	rpc, err := New(nil)
+	require.NoError(t, err)
 	result := make(chan error, 1)
 	go func() {
-		result <- (&RPC{}).Exec(stream)
+		result <- rpc.Exec(stream)
 	}()
 	stream.requests <- &ExecRequest{
 		Type: &ExecRequest_Command_{Command: command},
 	}
-	return stream, result
+	return rpc, stream, result
 }
 
 func receiveExecResponse(t *testing.T, stream *execTestStream) *ExecResponse {

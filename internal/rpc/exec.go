@@ -15,10 +15,12 @@ import (
 	"syscall"
 
 	"github.com/creack/pty"
+	"github.com/google/uuid"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -86,8 +88,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			return err
 		}
 
-		// Explicitly notify the client that the process was started
-		err = sendStartSuccess(stream)
+		// Explicitly notify the client that the process was started,
+		// but don't provide an exec ID since it's a detached process
+		err = sendStartSuccess(stream, "")
 		if err != nil {
 			return err
 		}
@@ -161,8 +164,12 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		defer ptmx.Close()
 	}
 
+	execID := uuid.NewString()
+	rpc.execs.Store(execID, cmd.Process)
+	defer rpc.execs.Delete(execID)
+
 	// Explicitly notify the client that the process was started
-	err = sendStartSuccess(stream)
+	err = sendStartSuccess(stream, execID)
 	if err != nil {
 		// Output readers have not started yet, so cancel and reap directly
 		_ = cmd.Cancel()
@@ -240,25 +247,6 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					Rows: uint16(typedAction.TerminalResize.GetRows()),
 					Cols: uint16(typedAction.TerminalResize.GetCols()),
 				}); err != nil {
-					reportClientError(err)
-
-					return
-				}
-			case *ExecRequest_SendSignal_:
-				var signal syscall.Signal
-
-				switch typedAction.SendSignal.GetSignal() {
-				case ExecRequest_SendSignal_SIGNAL_SIGTERM:
-					signal = syscall.SIGTERM
-				case ExecRequest_SendSignal_SIGNAL_SIGKILL:
-					signal = syscall.SIGKILL
-				default:
-					reportClientError(fmt.Errorf("unsupported exec signal %q", typedAction.SendSignal.GetSignal().String()))
-
-					return
-				}
-
-				if err := signalProcessGroup(cmd.Process, signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
 					reportClientError(err)
 
 					return
@@ -348,6 +336,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	// Wait for the command to finish
 	err = cmd.Wait()
 
+	// Minimize the window in which a finished exec can still be signaled
+	rpc.execs.Delete(execID)
+
 	// Prefer a client error over the command exit result
 	select {
 	case err := <-fromClientErrCh:
@@ -393,10 +384,41 @@ func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
 	return nil
 }
 
-func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
+func (rpc *RPC) Signal(_ context.Context, request *SignalRequest) (*emptypb.Empty, error) {
+	process, ok := rpc.execs.Load(request.GetExecId())
+	if !ok {
+		return nil, fmt.Errorf("exec %q is not running", request.GetExecId())
+	}
+
+	var signal syscall.Signal
+
+	switch request.GetSignal() {
+	case SignalRequest_SIGNAL_SIGTERM:
+		signal = syscall.SIGTERM
+	case SignalRequest_SIGNAL_SIGKILL:
+		signal = syscall.SIGKILL
+	default:
+		return nil, fmt.Errorf("unsupported exec signal %q", request.GetSignal().String())
+	}
+
+	if err := signalProcessGroup(process, signal); err != nil {
+		// The process may exit after lookup, so treat the missing process as a no-op
+		if errors.Is(err, os.ErrProcessDone) {
+			return &emptypb.Empty{}, nil
+		}
+
+		return nil, err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse], execID string) error {
 	return stream.Send(&ExecResponse{
 		Type: &ExecResponse_Started_{
-			Started: &ExecResponse_Started{},
+			Started: &ExecResponse_Started{
+				ExecId: execID,
+			},
 		},
 	})
 }
