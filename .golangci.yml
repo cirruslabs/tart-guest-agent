@@ -32,6 +32,7 @@ linters:
 
     # Style linters that are total nuts.
     - wsl
+    - wsl_v5
     - funlen
 
     # Enough parallelism for now.
