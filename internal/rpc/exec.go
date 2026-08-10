@@ -96,6 +96,11 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		return nil
 	}
 
+	// Kill the whole process group when the exec stream is canceled
+	cmd.Cancel = func() error {
+		return signalProcessGroup(cmd.Process, syscall.SIGKILL)
+	}
+
 	var stdin io.WriteCloser
 	var stdout, stderr io.ReadCloser
 	var ptmx *os.File
@@ -112,6 +117,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		stdout = ptmx
 		stderr = ptmx
 	} else {
+		// Start the command in its own process group so signals reach all descendants
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 		if firstExecRequestCommand.Command.Interactive {
 			stdin, err = cmd.StdinPipe()
 			if err != nil {
@@ -227,7 +235,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					return
 				}
 
-				if err := cmd.Process.Signal(signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				if err := signalProcessGroup(cmd.Process, signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
 					fromClientErrCh <- err
 
 					return
@@ -338,6 +346,19 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			},
 		},
 	})
+}
+
+func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
+	if err := syscall.Kill(-process.Pid, signal); err != nil {
+		// Translate a missing process group into the process-finished error expected by os/exec
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {

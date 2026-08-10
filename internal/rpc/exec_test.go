@@ -152,6 +152,23 @@ func TestExecSignalsProcess(t *testing.T) {
 	}
 }
 
+func TestExecSignalsProcessGroup(t *testing.T) {
+	stream, result := startExecTest(t, &ExecRequest_Command{
+		Name: "/bin/sh",
+		Args: []string{"-c", "sleep 30 & printf ready; wait"},
+	})
+	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
+	require.Equal(t, []byte("ready"), receiveExecResponse(t, stream).GetStandardOutput().GetData())
+
+	stream.requests <- &ExecRequest{
+		Type: &ExecRequest_Signal_{Signal: ExecRequest_SIGNAL_SIGTERM},
+	}
+
+	response := receiveExecResponse(t, stream)
+	require.EqualValues(t, signalExitCodeOffset+syscall.SIGTERM, response.GetExit().GetCode())
+	require.NoError(t, receiveExecResult(t, result))
+}
+
 func startExecTest(
 	t *testing.T,
 	command *ExecRequest_Command,
