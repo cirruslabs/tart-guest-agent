@@ -273,6 +273,7 @@ func receiveExecResult(t *testing.T, result <-chan error) error {
 func waitForExecTestPID(path string) (int, error) {
 	deadline := time.Now().Add(execTestTimeout)
 	for time.Now().Before(deadline) {
+		//nolint:gosec // path is created under t.TempDir by the test
 		data, err := os.ReadFile(path)
 		if err == nil {
 			return strconv.Atoi(string(data))
