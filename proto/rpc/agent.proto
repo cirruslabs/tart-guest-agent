@@ -10,10 +10,14 @@ service Agent {
 }
 
 message ExecRequest {
-  enum Signal {
-    SIGNAL_UNSPECIFIED = 0;
-    SIGNAL_SIGTERM = 1;
-    SIGNAL_SIGKILL = 2;
+  message SendSignal {
+    enum Signal {
+      SIGNAL_UNSPECIFIED = 0;
+      SIGNAL_SIGTERM = 1;
+      SIGNAL_SIGKILL = 2;
+    }
+
+    Signal signal = 1;
   }
 
   message Command {
@@ -31,7 +35,7 @@ message ExecRequest {
     Command command = 1;
     IOChunk standard_input = 2;
     TerminalSize terminal_resize = 3;
-    Signal signal = 4;
+    SendSignal send_signal = 4;
   }
 }
 

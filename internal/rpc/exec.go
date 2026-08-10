@@ -234,16 +234,16 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 					return
 				}
-			case *ExecRequest_Signal_:
+			case *ExecRequest_SendSignal_:
 				var signal syscall.Signal
 
-				switch typedAction.Signal {
-				case ExecRequest_SIGNAL_SIGTERM:
+				switch typedAction.SendSignal.GetSignal() {
+				case ExecRequest_SendSignal_SIGNAL_SIGTERM:
 					signal = syscall.SIGTERM
-				case ExecRequest_SIGNAL_SIGKILL:
+				case ExecRequest_SendSignal_SIGNAL_SIGKILL:
 					signal = syscall.SIGKILL
 				default:
-					reportClientError(fmt.Errorf("unsupported exec signal %q", typedAction.Signal.String()))
+					reportClientError(fmt.Errorf("unsupported exec signal %q", typedAction.SendSignal.GetSignal().String()))
 
 					return
 				}

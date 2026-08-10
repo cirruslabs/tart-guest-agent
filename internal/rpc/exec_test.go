@@ -131,23 +131,23 @@ func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 func TestExecSignalsProcess(t *testing.T) {
 	tests := []struct {
 		name   string
-		signal ExecRequest_Signal
+		signal ExecRequest_SendSignal_Signal
 		code   int32
 		err    string
 	}{
 		{
 			name:   "SIGTERM",
-			signal: ExecRequest_SIGNAL_SIGTERM,
+			signal: ExecRequest_SendSignal_SIGNAL_SIGTERM,
 			code:   int32(signalExitCodeOffset + syscall.SIGTERM),
 		},
 		{
 			name:   "SIGKILL",
-			signal: ExecRequest_SIGNAL_SIGKILL,
+			signal: ExecRequest_SendSignal_SIGNAL_SIGKILL,
 			code:   int32(signalExitCodeOffset + syscall.SIGKILL),
 		},
 		{
 			name:   "unsupported",
-			signal: ExecRequest_SIGNAL_UNSPECIFIED,
+			signal: ExecRequest_SendSignal_SIGNAL_UNSPECIFIED,
 			err:    `unsupported exec signal "SIGNAL_UNSPECIFIED"`,
 		},
 	}
@@ -161,7 +161,9 @@ func TestExecSignalsProcess(t *testing.T) {
 			require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
 
 			stream.requests <- &ExecRequest{
-				Type: &ExecRequest_Signal_{Signal: test.signal},
+				Type: &ExecRequest_SendSignal_{
+					SendSignal: &ExecRequest_SendSignal{Signal: test.signal},
+				},
 			}
 
 			if test.err != "" {
@@ -186,7 +188,9 @@ func TestExecSignalsProcessGroup(t *testing.T) {
 	require.Equal(t, []byte("ready"), receiveExecResponse(t, stream).GetStandardOutput().GetData())
 
 	stream.requests <- &ExecRequest{
-		Type: &ExecRequest_Signal_{Signal: ExecRequest_SIGNAL_SIGTERM},
+		Type: &ExecRequest_SendSignal_{
+			SendSignal: &ExecRequest_SendSignal{Signal: ExecRequest_SendSignal_SIGNAL_SIGTERM},
+		},
 	}
 
 	response := receiveExecResponse(t, stream)
