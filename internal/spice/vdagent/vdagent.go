@@ -48,10 +48,10 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case newClipboardState := <-clipboardCh:
-			if err := agent.processClipboardState(newClipboardState); err != nil {
+			if err := agent.processClipboardState(newClipboardState.Bytes); err != nil {
 				return err
 			}
-			agent.lastClipboardState = newClipboardState
+			agent.lastClipboardState = newClipboardState.Bytes
 		default:
 			// Nothing, proceed
 		}
