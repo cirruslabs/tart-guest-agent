@@ -5,7 +5,11 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -14,7 +18,10 @@ import (
 	"google.golang.org/grpc"
 )
 
-const execTestTimeout = 5 * time.Second
+const (
+	execTestShell   = "/bin/sh"
+	execTestTimeout = 5 * time.Second
+)
 
 type execTestStream struct {
 	grpc.ServerStream
@@ -22,6 +29,7 @@ type execTestStream struct {
 	ctx       context.Context
 	requests  chan *ExecRequest
 	responses chan *ExecResponse
+	sendHook  func(*ExecResponse) error
 }
 
 var _ grpc.BidiStreamingServer[ExecRequest, ExecResponse] = (*execTestStream)(nil)
@@ -35,6 +43,12 @@ func newExecTestStream(ctx context.Context) *execTestStream {
 }
 
 func (stream *execTestStream) Send(response *ExecResponse) error {
+	if stream.sendHook != nil {
+		if err := stream.sendHook(response); err != nil {
+			return err
+		}
+	}
+
 	select {
 	case stream.responses <- response:
 		return nil
@@ -59,7 +73,7 @@ func (stream *execTestStream) Context() context.Context { return stream.ctx }
 
 func TestExecSendsStartedBeforeOutputAndExit(t *testing.T) {
 	stream, result := startExecTest(t, &ExecRequest_Command{
-		Name: "/bin/sh",
+		Name: execTestShell,
 		Args: []string{"-c", "printf hello"},
 	})
 
@@ -97,7 +111,7 @@ func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 		{
 			name: "missing workdir",
 			command: &ExecRequest_Command{
-				Name:    "/bin/sh",
+				Name:    execTestShell,
 				Workdir: "/definitely/missing/tart-guest-agent-test-workdir",
 			},
 		},
@@ -119,6 +133,7 @@ func TestExecSignalsProcess(t *testing.T) {
 		name   string
 		signal ExecRequest_Signal
 		code   int32
+		err    string
 	}{
 		{
 			name:   "SIGTERM",
@@ -129,6 +144,11 @@ func TestExecSignalsProcess(t *testing.T) {
 			name:   "SIGKILL",
 			signal: ExecRequest_SIGNAL_SIGKILL,
 			code:   int32(signalExitCodeOffset + syscall.SIGKILL),
+		},
+		{
+			name:   "unsupported",
+			signal: ExecRequest_SIGNAL_UNSPECIFIED,
+			err:    `unsupported exec signal "SIGNAL_UNSPECIFIED"`,
 		},
 	}
 
@@ -144,6 +164,11 @@ func TestExecSignalsProcess(t *testing.T) {
 				Type: &ExecRequest_Signal_{Signal: test.signal},
 			}
 
+			if test.err != "" {
+				require.EqualError(t, receiveExecResult(t, result), test.err)
+				return
+			}
+
 			response := receiveExecResponse(t, stream)
 			require.NotNil(t, response.GetExit())
 			require.Equal(t, test.code, response.GetExit().GetCode())
@@ -154,7 +179,7 @@ func TestExecSignalsProcess(t *testing.T) {
 
 func TestExecSignalsProcessGroup(t *testing.T) {
 	stream, result := startExecTest(t, &ExecRequest_Command{
-		Name: "/bin/sh",
+		Name: execTestShell,
 		Args: []string{"-c", "sleep 30 & printf ready; wait"},
 	})
 	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
@@ -169,15 +194,48 @@ func TestExecSignalsProcessGroup(t *testing.T) {
 	require.NoError(t, receiveExecResult(t, result))
 }
 
+func TestExecReapsProcessWhenStartedCannotBeSent(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "pid")
+	sendErr := errors.New("failed to send Started")
+	var processPID int
+
+	_, result := startExecTest(t, &ExecRequest_Command{
+		Name: execTestShell,
+		Args: []string{"-c", `printf %d "$$" > "$PID_FILE"; exec sleep 30`},
+		Env:  map[string]string{"PID_FILE": pidPath},
+	}, func(stream *execTestStream) {
+		stream.sendHook = func(response *ExecResponse) error {
+			if response.GetStarted() == nil {
+				return nil
+			}
+
+			var err error
+			processPID, err = waitForExecTestPID(pidPath)
+			if err != nil {
+				return err
+			}
+
+			return sendErr
+		}
+	})
+
+	require.ErrorIs(t, receiveExecResult(t, result), sendErr)
+	require.ErrorIs(t, syscall.Kill(processPID, 0), syscall.ESRCH)
+}
+
 func startExecTest(
 	t *testing.T,
 	command *ExecRequest_Command,
+	configure ...func(*execTestStream),
 ) (*execTestStream, <-chan error) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	stream := newExecTestStream(ctx)
+	for _, configureStream := range configure {
+		configureStream(stream)
+	}
 	result := make(chan error, 1)
 	go func() {
 		result <- (&RPC{}).Exec(stream)
@@ -210,4 +268,21 @@ func receiveExecResult(t *testing.T, result <-chan error) error {
 		t.Fatal("timed out waiting for Exec to return")
 		return nil
 	}
+}
+
+func waitForExecTestPID(path string) (int, error) {
+	deadline := time.Now().Add(execTestTimeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return strconv.Atoi(string(data))
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return 0, err
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return 0, context.DeadlineExceeded
 }

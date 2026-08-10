@@ -71,16 +71,15 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			return sendStartFailure(stream)
 		}
 
+		// Release ownership before sending responses so failures do not leak the process handle
+		if err := cmd.Process.Release(); err != nil {
+			return err
+		}
+
 		// Explicitly notify the client that the process was started
 		err = sendStartSuccess(stream)
 		if err != nil {
 			return err
-		}
-
-		if cmd.Process != nil {
-			if err := cmd.Process.Release(); err != nil {
-				return err
-			}
 		}
 
 		if err := stream.Send(&ExecResponse{
@@ -147,25 +146,39 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		return sendStartFailure(stream)
 	}
 
-	// Explicitly notify the client that the process was started
-	err = sendStartSuccess(stream)
-	if err != nil {
-		return err
-	}
-
+	// Ensure the PTY is closed if sending the Started response fails
 	if ptmx != nil {
 		defer ptmx.Close()
 	}
 
+	// Explicitly notify the client that the process was started
+	err = sendStartSuccess(stream)
+	if err != nil {
+		// Output readers have not started yet, so cancel and reap directly
+		_ = cmd.Cancel()
+		_ = cmd.Wait()
+
+		return err
+	}
+
 	// Handle standard input and terminal resize events from the client
 	fromClientErrCh := make(chan error, 1)
+	reportClientError := func(err error) {
+		fromClientErrCh <- err
+		_ = cmd.Cancel()
+	}
 
 	go func() {
 		for {
 			request, err := stream.Recv()
 			if err != nil {
+				// Allow the client to close its sending side while continuing to receive responses
+				if errors.Is(err, io.EOF) {
+					return
+				}
+
 				if !errors.Is(err, context.Canceled) {
-					fromClientErrCh <- err
+					reportClientError(err)
 				}
 
 				return
@@ -192,7 +205,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					} else {
 						// Close the standard input
 						if err := stdin.Close(); err != nil {
-							fromClientErrCh <- err
+							reportClientError(err)
 
 							return
 						}
@@ -202,7 +215,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 				}
 
 				if _, err := stdin.Write(dataToWrite); err != nil {
-					fromClientErrCh <- err
+					reportClientError(err)
 
 					return
 				}
@@ -217,7 +230,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					Rows: uint16(typedAction.TerminalResize.GetRows()),
 					Cols: uint16(typedAction.TerminalResize.GetCols()),
 				}); err != nil {
-					fromClientErrCh <- err
+					reportClientError(err)
 
 					return
 				}
@@ -230,13 +243,13 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 				case ExecRequest_SIGNAL_SIGKILL:
 					signal = syscall.SIGKILL
 				default:
-					fromClientErrCh <- fmt.Errorf("unsupported exec signal %q", typedAction.Signal.String())
+					reportClientError(fmt.Errorf("unsupported exec signal %q", typedAction.Signal.String()))
 
 					return
 				}
 
 				if err := signalProcessGroup(cmd.Process, signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					fromClientErrCh <- err
+					reportClientError(err)
 
 					return
 				}
@@ -323,9 +336,18 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	}
 
 	// Wait for the command to finish
+	err = cmd.Wait()
+
+	// Prefer a client error over the command exit result
+	select {
+	case err := <-fromClientErrCh:
+		return err
+	default:
+	}
+
 	exitCode := 0
 
-	if err := cmd.Wait(); err != nil {
+	if err != nil {
 		var exitError *exec.ExitError
 		if !errors.As(err, &exitError) {
 			return err
