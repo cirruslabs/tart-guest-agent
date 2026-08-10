@@ -4,23 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/creack/pty"
-	"github.com/samber/lo"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
 	"io"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
+
+	"github.com/creack/pty"
+	"github.com/samber/lo"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
 const (
 	standardStreamsBufferSize = 4096
 
 	eofChar = 0x04
+
+	// execRuntimeFailureExitCode matches Docker's exit code for runtime failures before a process starts.
+	execRuntimeFailureExitCode = 125
+	// signalExitCodeOffset is the base for shell-style exit codes of processes terminated by signals.
+	signalExitCodeOffset = 128
 )
 
 func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
@@ -58,8 +65,18 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 		if err := cmd.Start(); err != nil {
+			zap.S().Warnf("failed to start %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
+				firstExecRequestCommand.Command.GetArgs()), err)
+
+			return sendStartFailure(stream)
+		}
+
+		// Explicitly notify the client that the process was started
+		err = sendStartSuccess(stream)
+		if err != nil {
 			return err
 		}
+
 		if cmd.Process != nil {
 			if err := cmd.Process.Release(); err != nil {
 				return err
@@ -114,9 +131,20 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 		err = cmd.Start()
 	}
+
+	if err != nil {
+		zap.S().Warnf("failed to start %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
+			firstExecRequestCommand.Command.GetArgs()), err)
+
+		return sendStartFailure(stream)
+	}
+
+	// Explicitly notify the client that the process was started
+	err = sendStartSuccess(stream)
 	if err != nil {
 		return err
 	}
+
 	if ptmx != nil {
 		defer ptmx.Close()
 	}
@@ -185,9 +213,38 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 					return
 				}
+			case *ExecRequest_Signal_:
+				var signal syscall.Signal
+
+				switch typedAction.Signal {
+				case ExecRequest_SIGNAL_SIGTERM:
+					signal = syscall.SIGTERM
+				case ExecRequest_SIGNAL_SIGKILL:
+					signal = syscall.SIGKILL
+				default:
+					fromClientErrCh <- fmt.Errorf("unsupported exec signal %q", typedAction.Signal.String())
+
+					return
+				}
+
+				if err := cmd.Process.Signal(signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
+					fromClientErrCh <- err
+
+					return
+				}
 			}
 		}
 	}()
+
+	// Serialize responses from the stdout and stderr goroutines
+	var sendMutex sync.Mutex
+
+	sendResponse := func(response *ExecResponse) error {
+		sendMutex.Lock()
+		defer sendMutex.Unlock()
+
+		return stream.Send(response)
+	}
 
 	group, _ := errgroup.WithContext(stream.Context())
 
@@ -210,7 +267,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 				return err
 			}
 
-			if err := stream.Send(&ExecResponse{
+			if err := sendResponse(&ExecResponse{
 				Type: &ExecResponse_StandardOutput{
 					StandardOutput: &IOChunk{
 						Data: slices.Clone(buf[:n]),
@@ -240,7 +297,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					return err
 				}
 
-				if err := stream.Send(&ExecResponse{
+				if err := sendResponse(&ExecResponse{
 					Type: &ExecResponse_StandardError{
 						StandardError: &IOChunk{
 							Data: slices.Clone(buf[:n]),
@@ -262,10 +319,15 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 	if err := cmd.Wait(); err != nil {
 		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			exitCode = exitError.ExitCode()
-		} else {
+		if !errors.As(err, &exitError) {
 			return err
+		}
+
+		// ExitCode returns -1 for signals; report the containerd-compatible 128 + signal instead
+		exitCode = exitError.ExitCode()
+
+		if waitStatus, ok := exitError.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
+			exitCode = signalExitCodeOffset + int(waitStatus.Signal())
 		}
 	}
 
@@ -273,6 +335,24 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		Type: &ExecResponse_Exit_{
 			Exit: &ExecResponse_Exit{
 				Code: int32(exitCode),
+			},
+		},
+	})
+}
+
+func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
+	return stream.Send(&ExecResponse{
+		Type: &ExecResponse_Started_{
+			Started: &ExecResponse_Started{},
+		},
+	})
+}
+
+func sendStartFailure(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
+	return stream.Send(&ExecResponse{
+		Type: &ExecResponse_Exit_{
+			Exit: &ExecResponse_Exit{
+				Code: execRuntimeFailureExitCode,
 			},
 		},
 	})

@@ -61,6 +61,15 @@ linters:
     # Not all errors need to be checked
     - errcheck
 
+    # It's OK to not initialize some struct fields
+    - exhaustruct
+
+    # This is not a library, so it's OK to use dynamic errors
+    - err113
+
+    # Inline error handling keeps assignment and checking together
+    - noinlineerr
+
 issues:
   # Don't hide multiple issues that belong to one class since GitHub annotations can handle them all nicely.
   max-issues-per-linter: 0

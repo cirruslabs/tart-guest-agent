@@ -10,6 +10,12 @@ service Agent {
 }
 
 message ExecRequest {
+  enum Signal {
+    SIGNAL_UNSPECIFIED = 0;
+    SIGNAL_SIGTERM = 1;
+    SIGNAL_SIGKILL = 2;
+  }
+
   message Command {
     string name = 1;
     repeated string args = 2;
@@ -25,6 +31,7 @@ message ExecRequest {
     Command command = 1;
     IOChunk standard_input = 2;
     TerminalSize terminal_resize = 3;
+    Signal signal = 4;
   }
 }
 
@@ -33,10 +40,15 @@ message ExecResponse {
     int32 code = 1;
   }
 
+  message Started {
+    // nothing for now
+  }
+
   oneof type {
     Exit exit = 1;
     IOChunk standard_output = 2;
     IOChunk standard_error = 3;
+    Started started = 4;
   }
 }
 
