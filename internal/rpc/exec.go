@@ -7,16 +7,20 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	userpkg "os/user"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/creack/pty"
+	"github.com/google/uuid"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -57,12 +61,20 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 	cmd := exec.CommandContext(execCtx, firstExecRequestCommand.Command.Name,
 		firstExecRequestCommand.Command.Args...)
-	applyExecOverrides(cmd, firstExecRequestCommand.Command)
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+
+	if err := applyExecOverrides(cmd, firstExecRequestCommand.Command); err != nil {
+		zap.S().Warnf("failed to configure %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
+			firstExecRequestCommand.Command.GetArgs()), err)
+
+		return sendStartFailure(stream)
+	}
 
 	if firstExecRequestCommand.Command.Detach {
 		cmd.Stdout = io.Discard
 		cmd.Stderr = io.Discard
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.SysProcAttr.Setsid = true
 
 		if err := cmd.Start(); err != nil {
 			zap.S().Warnf("failed to start %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
@@ -76,8 +88,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			return err
 		}
 
-		// Explicitly notify the client that the process was started
-		err = sendStartSuccess(stream)
+		// Explicitly notify the client that the process was started,
+		// but don't provide an exec ID since it's a detached process
+		err = sendStartSuccess(stream, "")
 		if err != nil {
 			return err
 		}
@@ -117,7 +130,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		stderr = ptmx
 	} else {
 		// Start the command in its own process group so signals reach all descendants
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.SysProcAttr.Setpgid = true
 
 		if firstExecRequestCommand.Command.Interactive {
 			stdin, err = cmd.StdinPipe()
@@ -151,8 +164,12 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		defer ptmx.Close()
 	}
 
+	execID := uuid.NewString()
+	rpc.execs.Store(execID, cmd.Process)
+	defer rpc.execs.Delete(execID)
+
 	// Explicitly notify the client that the process was started
-	err = sendStartSuccess(stream)
+	err = sendStartSuccess(stream, execID)
 	if err != nil {
 		// Output readers have not started yet, so cancel and reap directly
 		_ = cmd.Cancel()
@@ -169,11 +186,17 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	}
 
 	go func() {
+		var stdinClosed bool
+
 		for {
 			request, err := stream.Recv()
 			if err != nil {
 				// Allow the client to close its sending side while continuing to receive responses
 				if errors.Is(err, io.EOF) {
+					if err := closeStdin(stdin, firstExecRequestCommand.Command.GetTty(), &stdinClosed); err != nil {
+						reportClientError(err)
+					}
+
 					return
 				}
 
@@ -192,29 +215,18 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					continue
 				}
 
-				dataToWrite := typedAction.StandardInput.Data
-
 				// Check if the remote client has received EOF on their standard input
 				if len(typedAction.StandardInput.Data) == 0 {
-					if firstExecRequestCommand.Command.Tty {
-						// When using pseudo-terminal, we can't simply close the
-						// standard input, as the file descriptor is shared for
-						// standard output and standard error too, so we send
-						// an EOF character instead
-						dataToWrite = []byte{eofChar}
-					} else {
-						// Close the standard input
-						if err := stdin.Close(); err != nil {
-							reportClientError(err)
+					if err := closeStdin(stdin, firstExecRequestCommand.Command.GetTty(), &stdinClosed); err != nil {
+						reportClientError(err)
 
-							return
-						}
-
-						continue
+						return
 					}
+
+					continue
 				}
 
-				if _, err := stdin.Write(dataToWrite); err != nil {
+				if _, err := stdin.Write(typedAction.StandardInput.GetData()); err != nil {
 					reportClientError(err)
 
 					return
@@ -230,25 +242,6 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					Rows: uint16(typedAction.TerminalResize.GetRows()),
 					Cols: uint16(typedAction.TerminalResize.GetCols()),
 				}); err != nil {
-					reportClientError(err)
-
-					return
-				}
-			case *ExecRequest_SendSignal_:
-				var signal syscall.Signal
-
-				switch typedAction.SendSignal.GetSignal() {
-				case ExecRequest_SendSignal_SIGNAL_SIGTERM:
-					signal = syscall.SIGTERM
-				case ExecRequest_SendSignal_SIGNAL_SIGKILL:
-					signal = syscall.SIGKILL
-				default:
-					reportClientError(fmt.Errorf("unsupported exec signal %q", typedAction.SendSignal.GetSignal().String()))
-
-					return
-				}
-
-				if err := signalProcessGroup(cmd.Process, signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
 					reportClientError(err)
 
 					return
@@ -338,6 +331,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	// Wait for the command to finish
 	err = cmd.Wait()
 
+	// Minimize the window in which a finished exec can still be signaled
+	rpc.execs.Delete(execID)
+
 	// Prefer a client error over the command exit result
 	select {
 	case err := <-fromClientErrCh:
@@ -383,10 +379,63 @@ func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
 	return nil
 }
 
-func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
+func closeStdin(stdin io.WriteCloser, tty bool, closed *bool) error {
+	if stdin == nil || *closed {
+		return nil
+	}
+
+	if tty {
+		// When using pseudo-terminal, we can't simply close the
+		// standard input, as the file descriptor is shared for
+		// standard output and standard error too, so we send
+		// an EOF character instead
+		if _, err := stdin.Write([]byte{eofChar}); err != nil {
+			return err
+		}
+	} else if err := stdin.Close(); err != nil {
+		return err
+	}
+
+	*closed = true
+
+	return nil
+}
+
+func (rpc *RPC) Signal(_ context.Context, request *SignalRequest) (*emptypb.Empty, error) {
+	process, ok := rpc.execs.Load(request.GetExecId())
+	if !ok {
+		return nil, fmt.Errorf("exec %q is not running", request.GetExecId())
+	}
+
+	var signal syscall.Signal
+
+	switch request.GetSignal() {
+	case SignalRequest_SIGNAL_SIGTERM:
+		signal = syscall.SIGTERM
+	case SignalRequest_SIGNAL_SIGKILL:
+		signal = syscall.SIGKILL
+	default:
+		return nil, fmt.Errorf("unsupported exec signal %q", request.GetSignal().String())
+	}
+
+	if err := signalProcessGroup(process, signal); err != nil {
+		// The process may exit after lookup, so treat the missing process as a no-op
+		if errors.Is(err, os.ErrProcessDone) {
+			return &emptypb.Empty{}, nil
+		}
+
+		return nil, err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse], execID string) error {
 	return stream.Send(&ExecResponse{
 		Type: &ExecResponse_Started_{
-			Started: &ExecResponse_Started{},
+			Started: &ExecResponse_Started{
+				ExecId: execID,
+			},
 		},
 	})
 }
@@ -401,7 +450,7 @@ func sendStartFailure(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]
 	})
 }
 
-func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) {
+func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) error {
 	if command.Workdir != "" {
 		cmd.Dir = command.Workdir
 	}
@@ -409,6 +458,37 @@ func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) {
 	if len(command.Env) > 0 {
 		cmd.Env = mergeEnv(command.Env)
 	}
+
+	if user := command.GetUser(); user != "" {
+		selectedUser, err := userpkg.Lookup(user)
+		if err != nil {
+			return fmt.Errorf("failed to resolve user %q: %w", user, err)
+		}
+
+		uid, err := strconv.ParseUint(selectedUser.Uid, 10, 32)
+		if err != nil {
+			return fmt.Errorf("failed to parse UID %q for user %q: %w",
+				selectedUser.Uid, user, err)
+		}
+
+		gid, err := strconv.ParseUint(selectedUser.Gid, 10, 32)
+		if err != nil {
+			return fmt.Errorf("failed to parse GID %q for user %q: %w",
+				selectedUser.Gid, user, err)
+		}
+
+		if uint32(uid) == uint32(os.Geteuid()) && uint32(gid) == uint32(os.Getegid()) {
+			return nil
+		}
+
+		// Avoid changing credentials when the requested user is the same as guest agen't user
+		cmd.SysProcAttr.Credential = &syscall.Credential{
+			Uid: uint32(uid),
+			Gid: uint32(gid),
+		}
+	}
+
+	return nil
 }
 
 func mergeEnv(overrides map[string]string) []string {

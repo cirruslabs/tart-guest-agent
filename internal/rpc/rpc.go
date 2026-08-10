@@ -2,13 +2,17 @@ package rpc
 
 import (
 	"context"
-	"google.golang.org/grpc"
 	"net"
+	"os"
+
+	"github.com/puzpuzpuz/xsync/v4"
+	"google.golang.org/grpc"
 )
 
 type RPC struct {
 	grpcServer *grpc.Server
 	listener   net.Listener
+	execs      *xsync.Map[string, *os.Process]
 
 	UnimplementedAgentServer
 }
@@ -17,6 +21,7 @@ func New(listener net.Listener) (*RPC, error) {
 	rpc := &RPC{
 		grpcServer: grpc.NewServer(),
 		listener:   listener,
+		execs:      xsync.NewMap[string, *os.Process](),
 	}
 
 	RegisterAgentServer(rpc.grpcServer, rpc)
