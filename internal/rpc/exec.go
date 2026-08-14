@@ -7,13 +7,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	userpkg "os/user"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/cirruslabs/tart-guest-agent/internal/execuser"
 	"github.com/creack/pty"
 	"github.com/google/uuid"
 	"github.com/samber/lo"
@@ -460,32 +459,17 @@ func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) error {
 	}
 
 	if user := command.GetUser(); user != "" {
-		selectedUser, err := userpkg.Lookup(user)
+		credential, err := execuser.Resolve(user)
 		if err != nil {
-			return fmt.Errorf("failed to resolve user %q: %w", user, err)
+			return fmt.Errorf("failed to apply user override %q: %w", user, err)
 		}
 
-		uid, err := strconv.ParseUint(selectedUser.Uid, 10, 32)
-		if err != nil {
-			return fmt.Errorf("failed to parse UID %q for user %q: %w",
-				selectedUser.Uid, user, err)
-		}
-
-		gid, err := strconv.ParseUint(selectedUser.Gid, 10, 32)
-		if err != nil {
-			return fmt.Errorf("failed to parse GID %q for user %q: %w",
-				selectedUser.Gid, user, err)
-		}
-
-		if uint32(uid) == uint32(os.Geteuid()) && uint32(gid) == uint32(os.Getegid()) {
+		// Avoid changing credentials when the requested user is the guest agent user
+		if credential.Uid == uint32(os.Geteuid()) && credential.Gid == uint32(os.Getegid()) {
 			return nil
 		}
 
-		// Avoid changing credentials when the requested user is the same as guest agen't user
-		cmd.SysProcAttr.Credential = &syscall.Credential{
-			Uid: uint32(uid),
-			Gid: uint32(gid),
-		}
+		cmd.SysProcAttr.Credential = credential
 	}
 
 	return nil
