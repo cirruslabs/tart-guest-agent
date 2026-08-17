@@ -23,6 +23,10 @@ func TestResolve(t *testing.T) {
 	currentGID, err := strconv.ParseUint(currentUser.Gid, 10, 32)
 	require.NoError(t, err)
 
+	const unregisteredUID = "4294967295"
+	_, err = userpkg.LookupId(unregisteredUID)
+	require.Error(t, err)
+
 	tests := []struct {
 		name string
 		spec string
@@ -47,6 +51,16 @@ func TestResolve(t *testing.T) {
 			name: "named user and numeric group",
 			spec: currentUser.Username + ":31337",
 			want: &syscall.Credential{Uid: uint32(currentUID), Gid: 31337},
+		},
+		{
+			name: "numeric user and numeric group",
+			spec: unregisteredUID + ":31337",
+			want: &syscall.Credential{Uid: 4294967295, Gid: 31337},
+		},
+		{
+			name: "numeric user and named group",
+			spec: unregisteredUID + ":" + currentGroup.Name,
+			want: &syscall.Credential{Uid: 4294967295, Gid: uint32(currentGID)},
 		},
 	}
 
