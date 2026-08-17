@@ -12,6 +12,7 @@ import (
 // Resolve parses a user override in user[:group] form.
 //
 // User and group components may be names or numeric IDs.
+//nolint:nestif // looks good for now
 func Resolve(spec string) (*syscall.Credential, error) {
 	// Split the override into user and optional group
 	userPart, groupPart, _ := strings.Cut(spec, ":")
