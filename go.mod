@@ -11,21 +11,19 @@ require (
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
 	github.com/samber/lo v1.53.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.0
 	go.uber.org/zap v1.28.0
 	golang.design/x/clipboard v0.8.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.83.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 	howett.net/plist v1.0.1
 )
 
 require (
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.design/x/x11 v0.2.0 // indirect
