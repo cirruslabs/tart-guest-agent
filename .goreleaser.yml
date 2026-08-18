@@ -39,6 +39,9 @@ universal_binaries:
   - replace: true
     ids:
       - darwin
+    hooks:
+      # Sign the merged executable before archives and checksums are created.
+      post: 'bash packaging/sign-darwin.sh {{ if .IsSnapshot }}snapshot{{ else }}release{{ end }} "{{ .Path }}"'
 
 archives:
   - name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"

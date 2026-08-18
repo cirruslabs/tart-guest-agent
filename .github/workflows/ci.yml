@@ -57,3 +57,5 @@ jobs:
           cache: true
       - name: Run tests
         run: go test -v ./...
+      - name: Test Darwin universal signing
+        run: bash packaging/test-darwin-signing.sh
