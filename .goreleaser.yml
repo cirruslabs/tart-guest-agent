@@ -39,11 +39,32 @@ universal_binaries:
   - replace: true
     ids:
       - darwin
+    # GoReleaser's macOS signer uses the executable name as its identifier.
+    name_template: tart-guest-agent
+    hooks:
+      post: '{{ if .IsSnapshot }}codesign --force --sign - --identifier tart-guest-agent --timestamp=none "{{ .Path }}"{{ else }}true{{ end }}'
+
+notarize:
+  macos:
+    - enabled: '{{ not .IsSnapshot }}'
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
 
 archives:
   - name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - tar.gz
+    hooks:
+      # The built-in macOS signer runs before archiving.
+      before:
+        - cmd: >-
+            {{ if eq .Os "darwin" }}
+            sh -ec 'lipo "$1" -verify_arch arm64 x86_64;
+            codesign --verify --all-architectures --strict "$1";
+            for arch in arm64 x86_64; do codesign --verify --strict --arch "$arch" "$1"; done'
+            _ "{{ .Dist }}/tart-guest-agent_darwin_all/tart-guest-agent"
+            {{ else }}true{{ end }}
 
 release:
   prerelease: auto
