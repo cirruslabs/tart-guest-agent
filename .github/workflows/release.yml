@@ -25,11 +25,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Import Developer ID signing certificate
-        run: bash packaging/import-darwin-signing-key.sh
-        env:
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
       - name: Create release app token for this repository
         id: release-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
@@ -57,15 +52,8 @@ jobs:
           GITHUB_TOKEN: ${{ steps.release-token.outputs.token }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
-      - name: Verify Darwin release archive
-        run: bash packaging/verify-darwin-archive.sh release dist
-      - name: Remove temporary signing keychain
-        if: always()
-        run: |
-          keychain="$RUNNER_TEMP/tart-guest-agent-signing.keychain-db"
-          if [[ -f "$keychain" ]]; then
-            security delete-keychain "$keychain"
-          fi
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
 
   dry-run:
     name: Release (Dry Run)
@@ -89,8 +77,6 @@ jobs:
           args: release --skip=publish --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Verify Darwin snapshot archive
-        run: bash packaging/verify-darwin-archive.sh snapshot dist
       - name: Upload dry-run artifacts
         uses: actions/upload-artifact@v6
         with:
