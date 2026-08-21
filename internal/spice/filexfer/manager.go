@@ -129,17 +129,7 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 
 	// If size is 0 or empty data, indicates completion
 	if msg.Size == 0 || len(msg.Data) == 0 {
-		_ = task.file.Sync()
-		_ = task.file.Close()
-		delete(m.tasks, msg.ID)
-
-		zap.S().Infof("filexfer: completed transfer id=%d (%s, total=%d bytes) successfully",
-			task.id, task.name, task.bytesRcvd)
-
-		return &vd.VDAgentFileXferStatus{
-			ID:     msg.ID,
-			Result: vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS,
-		}, true, nil
+		return m.finishTask(task)
 	}
 
 	n, err := task.file.Write(msg.Data)
@@ -158,23 +148,42 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 
 	// If totalSize was specified and reached
 	if task.totalSize > 0 && task.bytesRcvd >= task.totalSize {
-		_ = task.file.Sync()
-		_ = task.file.Close()
-		delete(m.tasks, msg.ID)
-
-		zap.S().Infof("filexfer: transfer id=%d (%s) reached total size (%d bytes) -> finished",
-			task.id, task.name, task.bytesRcvd)
-
-		return &vd.VDAgentFileXferStatus{
-			ID:     msg.ID,
-			Result: vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS,
-		}, true, nil
+		return m.finishTask(task)
 	}
 
 	return &vd.VDAgentFileXferStatus{
 		ID:     msg.ID,
 		Result: vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA,
 	}, false, nil
+}
+
+func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, bool, error) {
+	var err error
+	if syncErr := task.file.Sync(); syncErr != nil && err == nil {
+		err = syncErr
+	}
+	if closeErr := task.file.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+
+	delete(m.tasks, task.id)
+
+	if err != nil {
+		zap.S().Errorf("filexfer: failed finalizing file %s: %v", task.targetPath, err)
+		_ = os.Remove(task.targetPath)
+		return &vd.VDAgentFileXferStatus{
+			ID:     task.id,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, false, err
+	}
+
+	zap.S().Infof("filexfer: completed transfer id=%d (%s, total=%d bytes) successfully",
+		task.id, task.name, task.bytesRcvd)
+
+	return &vd.VDAgentFileXferStatus{
+		ID:     task.id,
+		Result: vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS,
+	}, true, nil
 }
 
 // Cancel terminates and removes incomplete transfer files.
