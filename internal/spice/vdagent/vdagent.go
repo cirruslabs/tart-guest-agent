@@ -337,6 +337,9 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			if statusMsg.Result == vd.VD_AGENT_FILE_XFER_STATUS_CANCELLED || statusMsg.Result == vd.VD_AGENT_FILE_XFER_STATUS_ERROR {
 				agent.fileXferMgr.Cancel(statusMsg.ID)
 			}
+		case vd.VD_AGENT_CLIENT_DISCONNECTED:
+			zap.S().Debugf("I: VD_AGENT_CLIENT_DISCONNECTED")
+			agent.fileXferMgr.Close()
 		default:
 			zap.S().Debugf("I: unhandled message type: %d", vdiAgentMessage.Type)
 		}

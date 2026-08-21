@@ -94,6 +94,14 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 		}, err
 	}
 
+	// Clean up any existing active task with duplicate ID
+	if existingTask, exists := m.tasks[msg.ID]; exists {
+		_ = existingTask.file.Close()
+		_ = os.Remove(existingTask.targetPath)
+		delete(m.tasks, msg.ID)
+		zap.S().Warnf("filexfer: task id=%d already exists; cleaned up previous transfer", msg.ID)
+	}
+
 	task := &transferTask{
 		id:         msg.ID,
 		name:       cleanName,
@@ -175,6 +183,16 @@ func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, boo
 			ID:     task.id,
 			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
 		}, false, err
+	}
+
+	if task.totalSize > 0 && task.bytesRcvd != task.totalSize {
+		zap.S().Errorf("filexfer: size mismatch for %s: expected %d bytes, received %d bytes",
+			task.targetPath, task.totalSize, task.bytesRcvd)
+		_ = os.Remove(task.targetPath)
+		return &vd.VDAgentFileXferStatus{
+			ID:     task.id,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, false, fmt.Errorf("transfer size mismatch: expected %d, got %d", task.totalSize, task.bytesRcvd)
 	}
 
 	zap.S().Infof("filexfer: completed transfer id=%d (%s, total=%d bytes) successfully",
