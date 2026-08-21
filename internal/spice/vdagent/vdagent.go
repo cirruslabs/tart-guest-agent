@@ -18,6 +18,7 @@ type VDAgent struct {
 	serialPort         *os.File
 	vdi                *vdi.VDI
 	lastClipboardState []byte
+	lastClipboardType  uint32
 }
 
 func New() (*VDAgent, error) {
@@ -40,7 +41,8 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 	subCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	clipboardCh := clipboard.Watch(subCtx, clipboard.FmtText)
+	// Watch both text and image clipboard changes
+	clipboardCh := clipboard.Watch(subCtx)
 
 	for {
 		// Check for cancellation and clipboard changes
@@ -48,10 +50,18 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case newClipboardState := <-clipboardCh:
-			if err := agent.processClipboardState(newClipboardState.Bytes); err != nil {
+			var clipType uint32
+			if newClipboardState.Format == clipboard.FmtImage {
+				clipType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+			} else {
+				clipType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+			}
+
+			if err := agent.processClipboardState(newClipboardState.Bytes, clipType); err != nil {
 				return err
 			}
 			agent.lastClipboardState = newClipboardState.Bytes
+			agent.lastClipboardType = clipType
 		default:
 			// Nothing, proceed
 		}
@@ -120,8 +130,14 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			zap.S().Debugf("I: VD_AGENT_CLIPBOARD_GRAB (%d bytes): %s",
 				len(vdiAgentMessage.Data), vdAgentClipboardGrab)
 
+			reqType := vdAgentClipboardGrab.Type
+			if reqType == 0 {
+				reqType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+			}
+
 			ourClipboardRequest := vd.VDAgentClipboardRequest{
-				Type: 1,
+				Selection: vdAgentClipboardGrab.Selection,
+				Type:      reqType,
 			}
 			ourClipboardRequestBytes, err := ourClipboardRequest.Encode()
 			if err != nil {
@@ -145,9 +161,9 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				return err
 			}
 
-			zap.S().Debugf("O: VD_AGENT_CLIPBOARD_REQUEST")
+			zap.S().Debugf("O: VD_AGENT_CLIPBOARD_REQUEST (type=%d)", reqType)
 		case vd.VD_AGENT_CLIPBOARD:
-			// Receive clipboard
+			// Receive clipboard from host
 			vdAgentClipboard, err := vd.DecodeVDAgentClipboard(vdiAgentMessage.Data)
 			if err != nil {
 				return err
@@ -155,7 +171,16 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 			zap.S().Debugf("I: VD_AGENT_CLIPBOARD: %s", vdAgentClipboard)
 
-			clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
+			switch vdAgentClipboard.Type {
+			case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
+				clipboard.Write(clipboard.FmtImage, vdAgentClipboard.Data)
+				zap.S().Debugf("Wrote image clipboard data (%d bytes)", len(vdAgentClipboard.Data))
+			case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
+				fallthrough
+			default:
+				clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
+				zap.S().Debugf("Wrote text clipboard data (%d bytes)", len(vdAgentClipboard.Data))
+			}
 		case vd.VD_AGENT_CLIPBOARD_REQUEST:
 			vdAgentClipboardRequest, err := vd.DecodeVDAgentClipboardRequest(bytes.NewReader(vdiAgentMessage.Data))
 			if err != nil {
@@ -164,13 +189,27 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 			zap.S().Debugf("I: VD_AGENT_CLIPBOARD_REQUEST: %s", vdAgentClipboardRequest)
 
+			var data []byte
+			respType := vdAgentClipboardRequest.Type
+
+			switch respType {
+			case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
+				data = clipboard.Read(clipboard.FmtImage)
+				respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+			case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
+				fallthrough
+			default:
+				data = clipboard.Read(clipboard.FmtText)
+				respType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+			}
+
 			// Send clipboard
 			ourAgentClipboard := vd.VDAgentClipboard{
 				VDAgentClipboardInner: vd.VDAgentClipboardInner{
-					Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
-					Type:      vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+					Selection: vdAgentClipboardRequest.Selection,
+					Type:      respType,
 				},
-				Data: clipboard.Read(clipboard.FmtText),
+				Data: data,
 			}
 			ourAgentClipboardBytes, err := ourAgentClipboard.Encode()
 			if err != nil {
@@ -194,7 +233,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				return err
 			}
 
-			zap.S().Debugf("O: VD_AGENT_CLIPBOARD")
+			zap.S().Debugf("O: VD_AGENT_CLIPBOARD (type=%d, %d bytes)", respType, len(data))
 		default:
 			zap.S().Debugf("I: unhandled message type: %d", vdiAgentMessage.Type)
 		}
@@ -205,15 +244,15 @@ func (agent *VDAgent) Close() error {
 	return agent.serialPort.Close()
 }
 
-func (agent *VDAgent) processClipboardState(newClipboardState []byte) error {
-	if bytes.Equal(agent.lastClipboardState, newClipboardState) {
+func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType uint32) error {
+	if bytes.Equal(agent.lastClipboardState, newClipboardState) && agent.lastClipboardType == clipType {
 		// Nothing changed since the last VD_AGENT_CLIPBOARD_GRAB from us
 		return nil
 	}
 
 	ourGrab := vd.VDAgentClipboardGrab{
 		Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
-		Type:      vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+		Type:      clipType,
 	}
 	ourGrabBytes, err := ourGrab.Encode()
 	if err != nil {
@@ -237,8 +276,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte) error {
 		return err
 	}
 
-	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB")
+	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (type=%d)", clipType)
 
 	return nil
-
 }
