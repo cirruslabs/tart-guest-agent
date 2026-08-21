@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package execuser resolves user overrides for guest exec processes.
 package execuser
 
