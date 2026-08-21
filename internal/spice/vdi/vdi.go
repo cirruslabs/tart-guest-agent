@@ -51,33 +51,18 @@ readPayload:
 	goto readPayload
 }
 
-// MaxChunkSize defines the maximum payload per VDI chunk (VD_AGENT_MAX_DATA_SIZE)
-const MaxChunkSize = 2048
-
 func (vdi *VDI) Write(buf []byte) (int, error) {
-	if len(buf) == 0 {
-		return 0, nil
+	// Write header
+	buffer := &bytes.Buffer{}
+
+	vdiChunkHeader := chunkHeader{
+		Port: vd.VDP_CLIENT_PORT,
+		Size: uint32(len(buf)),
+	}
+	if err := binary.Write(buffer, binary.LittleEndian, &vdiChunkHeader); err != nil {
+		return 0, err
 	}
 
-	totalWritten := 0
-	for offset := 0; offset < len(buf); offset += MaxChunkSize {
-		chunkEnd := min(offset+MaxChunkSize, len(buf))
-		chunk := buf[offset:chunkEnd]
-
-		buffer := &bytes.Buffer{}
-		vdiChunkHeader := chunkHeader{
-			Port: vd.VDP_CLIENT_PORT,
-			Size: uint32(len(chunk)),
-		}
-		if err := binary.Write(buffer, binary.LittleEndian, &vdiChunkHeader); err != nil {
-			return totalWritten, err
-		}
-
-		if _, err := vdi.inner.Write(append(buffer.Bytes(), chunk...)); err != nil {
-			return totalWritten, err
-		}
-		totalWritten += len(chunk)
-	}
-
-	return totalWritten, nil
+	// Write payload
+	return vdi.inner.Write(append(buffer.Bytes(), buf...))
 }
