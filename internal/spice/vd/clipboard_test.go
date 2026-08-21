@@ -52,16 +52,16 @@ func TestClipboardTextAndImageEncoding(t *testing.T) {
 func TestClipboardGrabEncoding(t *testing.T) {
 	grab := vd.VDAgentClipboardGrab{
 		Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
-		Type:      vd.VD_AGENT_CLIPBOARD_IMAGE_PNG,
+		Types:     []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT},
 	}
 
 	encoded, err := grab.Encode()
 	require.NoError(t, err)
 
-	decoded, err := vd.DecodeVDAgentClipboardGrab(bytes.NewReader(encoded))
+	decoded, err := vd.DecodeVDAgentClipboardGrab(encoded)
 	require.NoError(t, err)
 	assert.Equal(t, uint8(vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD), decoded.Selection)
-	assert.Equal(t, uint32(vd.VD_AGENT_CLIPBOARD_IMAGE_PNG), decoded.Type)
+	assert.Equal(t, []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT}, decoded.Types)
 }
 
 func TestClipboardRequestEncoding(t *testing.T) {

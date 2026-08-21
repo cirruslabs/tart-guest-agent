@@ -3,15 +3,19 @@ package vdagent
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"io"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/imageopt"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 	"go.uber.org/zap"
 	"golang.design/x/clipboard"
-	"os"
-	"time"
 )
 
 func findSerialPortPath() string {
@@ -87,9 +91,9 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			return err
 		}
 
-		vdiAgentMessage, err := vd.ReadVDAgentMessage(agent.vdi)
+		vdiAgentMessage, err := agent.readMessage()
 		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
+			if errors.Is(err, os.ErrDeadlineExceeded) || strings.Contains(err.Error(), "i/o timeout") {
 				continue
 			}
 
@@ -139,7 +143,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 			zap.S().Debugf("O: VD_AGENT_ANNOUNCE_CAPABILITIES")
 		case vd.VD_AGENT_CLIPBOARD_GRAB:
-			vdAgentClipboardGrab, err := vd.DecodeVDAgentClipboardGrab(bytes.NewReader(vdiAgentMessage.Data))
+			vdAgentClipboardGrab, err := vd.DecodeVDAgentClipboardGrab(vdiAgentMessage.Data)
 			if err != nil {
 				return err
 			}
@@ -147,9 +151,19 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			zap.S().Debugf("I: VD_AGENT_CLIPBOARD_GRAB (%d bytes): %s",
 				len(vdiAgentMessage.Data), vdAgentClipboardGrab)
 
-			reqType := vdAgentClipboardGrab.Type
-			if reqType == 0 {
-				reqType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+			reqType := uint32(vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+			if len(vdAgentClipboardGrab.Types) > 0 {
+				reqType = vdAgentClipboardGrab.Types[0]
+				// Prioritize image if available in advertised types
+				for _, t := range vdAgentClipboardGrab.Types {
+					if t == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG ||
+						t == vd.VD_AGENT_CLIPBOARD_IMAGE_BMP ||
+						t == vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF ||
+						t == vd.VD_AGENT_CLIPBOARD_IMAGE_JPG {
+						reqType = t
+						break
+					}
+				}
 			}
 
 			ourClipboardRequest := vd.VDAgentClipboardRequest{
@@ -359,7 +373,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 
 	ourGrab := vd.VDAgentClipboardGrab{
 		Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
-		Type:      clipType,
+		Types:     []uint32{clipType},
 	}
 	ourGrabBytes, err := ourGrab.Encode()
 	if err != nil {
@@ -386,4 +400,26 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (type=%d)", clipType)
 
 	return nil
+}
+
+func (agent *VDAgent) readMessage() (*vd.VDAgentMessage, error) {
+	var inner vd.VDAgentMessageInner
+	if err := binary.Read(agent.vdi, binary.LittleEndian, &inner); err != nil {
+		return nil, err
+	}
+
+	// Extend deadline for message payload streaming
+	if inner.Size > 0 {
+		_ = agent.serialPort.SetReadDeadline(time.Now().Add(30 * time.Second))
+	}
+
+	data := make([]byte, inner.Size)
+	if _, err := io.ReadFull(agent.vdi, data); err != nil {
+		return nil, err
+	}
+
+	return &vd.VDAgentMessage{
+		VDAgentMessageInner: inner,
+		Data:                data,
+	}, nil
 }
