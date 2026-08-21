@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
+	"github.com/cirruslabs/tart-guest-agent/internal/spice/imageopt"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 	"go.uber.org/zap"
@@ -176,8 +177,9 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 			switch vdAgentClipboard.Type {
 			case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
-				clipboard.Write(clipboard.FmtImage, vdAgentClipboard.Data)
-				zap.S().Debugf("Wrote image clipboard data (%d bytes)", len(vdAgentClipboard.Data))
+				optimized := imageopt.OptimizeImage(vdAgentClipboard.Data)
+				clipboard.Write(clipboard.FmtImage, optimized)
+				zap.S().Debugf("Wrote image clipboard data (%d bytes -> %d bytes)", len(vdAgentClipboard.Data), len(optimized))
 			case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
 				fallthrough
 			default:
@@ -197,7 +199,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 			switch respType {
 			case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
-				data = clipboard.Read(clipboard.FmtImage)
+				data = imageopt.OptimizeImage(clipboard.Read(clipboard.FmtImage))
 				respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
 			case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
 				fallthrough
