@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 	"go.uber.org/zap"
@@ -19,6 +20,7 @@ type VDAgent struct {
 	vdi                *vdi.VDI
 	lastClipboardState []byte
 	lastClipboardType  uint32
+	fileXferMgr        *filexfer.Manager
 }
 
 func New() (*VDAgent, error) {
@@ -32,8 +34,9 @@ func New() (*VDAgent, error) {
 	}
 
 	return &VDAgent{
-		serialPort: sp,
-		vdi:        vdi.New(sp),
+		serialPort:  sp,
+		vdi:         vdi.New(sp),
+		fileXferMgr: filexfer.NewManager(),
 	}, nil
 }
 
@@ -234,6 +237,91 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			}
 
 			zap.S().Debugf("O: VD_AGENT_CLIPBOARD (type=%d, %d bytes)", respType, len(data))
+		case vd.VD_AGENT_FILE_XFER_START:
+			startXferMsg, err := vd.DecodeVDAgentFileXferStart(vdiAgentMessage.Data)
+			if err != nil {
+				zap.S().Errorf("failed to decode VD_AGENT_FILE_XFER_START: %v", err)
+				return err
+			}
+
+			zap.S().Debugf("I: VD_AGENT_FILE_XFER_START: %s", startXferMsg)
+
+			statusResp, err := agent.fileXferMgr.HandleStart(startXferMsg)
+			if err != nil {
+				zap.S().Errorf("failed handling file transfer start: %v", err)
+			}
+
+			statusBytes, err := statusResp.Encode()
+			if err != nil {
+				return err
+			}
+
+			respMsg := vd.VDAgentMessage{
+				VDAgentMessageInner: vd.VDAgentMessageInner{
+					Protocol: vd.VD_AGENT_PROTOCOL,
+					Type:     vd.VD_AGENT_FILE_XFER_STATUS,
+					Size:     uint32(len(statusBytes)),
+				},
+				Data: statusBytes,
+			}
+			respBytes, err := respMsg.Encode()
+			if err != nil {
+				return err
+			}
+
+			if _, err := agent.vdi.Write(respBytes); err != nil {
+				return err
+			}
+
+			zap.S().Debugf("O: VD_AGENT_FILE_XFER_STATUS (task=%d, result=%d)", statusResp.ID, statusResp.Result)
+		case vd.VD_AGENT_FILE_XFER_DATA:
+			dataXferMsg, err := vd.DecodeVDAgentFileXferData(vdiAgentMessage.Data)
+			if err != nil {
+				zap.S().Errorf("failed to decode VD_AGENT_FILE_XFER_DATA: %v", err)
+				return err
+			}
+
+			zap.S().Debugf("I: VD_AGENT_FILE_XFER_DATA: %s", dataXferMsg)
+
+			statusResp, completed, err := agent.fileXferMgr.HandleData(dataXferMsg)
+			if err != nil {
+				zap.S().Errorf("failed handling file transfer data: %v", err)
+			}
+
+			statusBytes, err := statusResp.Encode()
+			if err != nil {
+				return err
+			}
+
+			respMsg := vd.VDAgentMessage{
+				VDAgentMessageInner: vd.VDAgentMessageInner{
+					Protocol: vd.VD_AGENT_PROTOCOL,
+					Type:     vd.VD_AGENT_FILE_XFER_STATUS,
+					Size:     uint32(len(statusBytes)),
+				},
+				Data: statusBytes,
+			}
+			respBytes, err := respMsg.Encode()
+			if err != nil {
+				return err
+			}
+
+			if _, err := agent.vdi.Write(respBytes); err != nil {
+				return err
+			}
+
+			zap.S().Debugf("O: VD_AGENT_FILE_XFER_STATUS (task=%d, result=%d, completed=%v)",
+				statusResp.ID, statusResp.Result, completed)
+		case vd.VD_AGENT_FILE_XFER_STATUS:
+			statusMsg, err := vd.DecodeVDAgentFileXferStatus(vdiAgentMessage.Data)
+			if err != nil {
+				return err
+			}
+
+			zap.S().Debugf("I: VD_AGENT_FILE_XFER_STATUS: %s", statusMsg)
+			if statusMsg.Result == vd.VD_AGENT_FILE_XFER_STATUS_CANCELLED || statusMsg.Result == vd.VD_AGENT_FILE_XFER_STATUS_ERROR {
+				agent.fileXferMgr.Cancel(statusMsg.ID)
+			}
 		default:
 			zap.S().Debugf("I: unhandled message type: %d", vdiAgentMessage.Type)
 		}
@@ -241,6 +329,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 }
 
 func (agent *VDAgent) Close() error {
+	agent.fileXferMgr.Close()
 	return agent.serialPort.Close()
 }
 
