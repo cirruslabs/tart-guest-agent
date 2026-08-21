@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -25,5 +26,15 @@ func configurePgidSysProcAttr(cmd *exec.Cmd) {
 }
 
 func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
+	if process == nil {
+		return os.ErrProcessDone
+	}
+
+	// Terminate process tree (/T) forcefully (/F) on Windows
+	killCmd := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(process.Pid))
+	if err := killCmd.Run(); err == nil {
+		return nil
+	}
+
 	return process.Kill()
 }

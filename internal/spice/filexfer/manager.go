@@ -146,6 +146,7 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 	if err != nil {
 		zap.S().Errorf("filexfer: failed writing to %s: %v", task.targetPath, err)
 		_ = task.file.Close()
+		_ = os.Remove(task.targetPath)
 		delete(m.tasks, msg.ID)
 		return &vd.VDAgentFileXferStatus{
 			ID:     msg.ID,
