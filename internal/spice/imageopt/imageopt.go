@@ -3,7 +3,6 @@ package imageopt
 import (
 	"bytes"
 	"image"
-	"image/jpeg"
 	"image/png"
 
 	_ "golang.org/x/image/bmp"
@@ -19,7 +18,7 @@ const (
 )
 
 // OptimizeImage decodes any incoming image format (TIFF, BMP, PNG, JPEG, GIF)
-// and returns a high-fidelity compressed PNG (or high-quality JPEG if oversized).
+// and returns a high-fidelity compressed PNG.
 func OptimizeImage(data []byte) []byte {
 	if len(data) == 0 {
 		return data
@@ -34,16 +33,6 @@ func OptimizeImage(data []byte) []byte {
 	encoder := png.Encoder{CompressionLevel: png.DefaultCompression}
 	if err := encoder.Encode(&buf, img); err != nil {
 		return data
-	}
-
-	if buf.Len() <= MaxRecommendedSize {
-		return buf.Bytes()
-	}
-
-	// Fallback to high-quality JPEG if PNG is larger than 20MB
-	var jpegBuf bytes.Buffer
-	if err := jpeg.Encode(&jpegBuf, img, &jpeg.Options{Quality: 88}); err == nil && jpegBuf.Len() < buf.Len() {
-		return jpegBuf.Bytes()
 	}
 
 	return buf.Bytes()

@@ -14,7 +14,19 @@ import (
 	"time"
 )
 
-const serialPortPath = "/dev/tty.com.redhat.spice.0"
+func findSerialPortPath() string {
+	candidates := []string{
+		"/dev/tty.com.redhat.spice.0",
+		"/dev/virtio-ports/com.redhat.spice.0",
+		"/dev/vport7p0",
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return "/dev/tty.com.redhat.spice.0"
+}
 
 type VDAgent struct {
 	serialPort         *os.File
@@ -25,7 +37,8 @@ type VDAgent struct {
 }
 
 func New() (*VDAgent, error) {
-	sp, err := os.OpenFile(serialPortPath, os.O_RDWR, 0)
+	portPath := findSerialPortPath()
+	sp, err := os.OpenFile(portPath, os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
 	}

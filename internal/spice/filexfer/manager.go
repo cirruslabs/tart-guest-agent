@@ -76,7 +76,7 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 	// Sanitize filename to prevent directory traversal
 	cleanName := filepath.Base(fileName)
 	cleanName = strings.ReplaceAll(cleanName, "\x00", "")
-	if cleanName == "." || cleanName == "/" || cleanName == "" {
+	if cleanName == "." || cleanName == ".." || cleanName == "/" || cleanName == "\\" || cleanName == "" || strings.Contains(cleanName, "..") {
 		cleanName = fmt.Sprintf("tart_transfer_%d.dat", msg.ID)
 	}
 
