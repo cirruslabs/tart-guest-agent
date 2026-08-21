@@ -122,7 +122,10 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				}
 
 				if err := agent.processClipboardState(newClipboardState.Bytes, clipType); err != nil {
-					zap.S().Warnf("failed to process clipboard state: %v", err)
+					if gCtx.Err() != nil {
+						return gCtx.Err()
+					}
+					return fmt.Errorf("failed to process clipboard state: %w", err)
 				}
 			}
 		}
@@ -149,7 +152,10 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			}
 
 			if err := agent.handleMessage(vdiAgentMessage); err != nil {
-				zap.S().Warnf("error handling message type %d: %v", vdiAgentMessage.Type, err)
+				if gCtx.Err() != nil {
+					return gCtx.Err()
+				}
+				return fmt.Errorf("failed handling message type %d: %w", vdiAgentMessage.Type, err)
 			}
 		}
 	})

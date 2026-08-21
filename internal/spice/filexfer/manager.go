@@ -83,9 +83,17 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 	targetPath := filepath.Join(m.downloadDir, cleanName)
 
 	// Avoid overwriting by appending suffix if needed
-	targetPath = getUniqueFilePath(targetPath)
+	uniquePath, err := getUniqueFilePath(targetPath)
+	if err != nil {
+		zap.S().Errorf("filexfer: failed to determine unique target path for %s: %v", targetPath, err)
+		return &vd.VDAgentFileXferStatus{
+			ID:     msg.ID,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, err
+	}
+	targetPath = uniquePath
 
-	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		zap.S().Errorf("filexfer: failed to create target file %s: %v", targetPath, err)
 		return &vd.VDAgentFileXferStatus{
@@ -254,9 +262,9 @@ func parseMetadata(data []byte) (string, uint64) {
 	return fileName, fileSize
 }
 
-func getUniqueFilePath(path string) string {
+func getUniqueFilePath(path string) (string, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return path
+		return path, nil
 	}
 
 	dir := filepath.Dir(path)
@@ -266,9 +274,9 @@ func getUniqueFilePath(path string) string {
 	for i := 1; i < 1000; i++ {
 		candidate := filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+			return candidate, nil
 		}
 	}
 
-	return path
+	return "", fmt.Errorf("could not find unique filename for %s after 999 attempts", path)
 }
