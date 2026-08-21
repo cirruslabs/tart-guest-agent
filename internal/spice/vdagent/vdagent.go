@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"sync"
 
@@ -145,10 +143,10 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 			vdiAgentMessage, err := agent.readMessage()
 			if err != nil {
-				if gCtx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-					return nil
+				if gCtx.Err() != nil {
+					return gCtx.Err()
 				}
-				return err
+				return fmt.Errorf("serial read failed: %w", err)
 			}
 
 			if err := agent.handleMessage(vdiAgentMessage); err != nil {
