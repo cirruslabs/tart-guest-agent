@@ -111,15 +111,19 @@ func (agent *VDAgent) writeMessage(msgType uint32, data []byte) error {
 }
 
 func (agent *VDAgent) sendCapabilities(request uint32) error {
+	var caps uint32
+	if agent.clipboardEnabled {
+		caps = vd.VD_AGENT_CAP_CLIPBOARD_BY_DEMAND | vd.VD_AGENT_CAP_CLIPBOARD_SELECTION
+	}
 	ourCapabilities := vd.VDAgentAnnounceCapabilities{
 		Request: request,
-		Caps:    vd.VD_AGENT_CAP_CLIPBOARD_BY_DEMAND | vd.VD_AGENT_CAP_CLIPBOARD_SELECTION,
+		Caps:    caps,
 	}
 	encoded, err := ourCapabilities.Encode()
 	if err != nil {
 		return err
 	}
-	zap.S().Debugf("O: VD_AGENT_ANNOUNCE_CAPABILITIES (request=%d)", request)
+	zap.S().Debugf("O: VD_AGENT_ANNOUNCE_CAPABILITIES (request=%d, caps=%d)", request, caps)
 	return agent.writeMessage(vd.VD_AGENT_ANNOUNCE_CAPABILITIES, encoded)
 }
 
@@ -229,6 +233,11 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			}
 		}
 	case vd.VD_AGENT_CLIPBOARD_GRAB:
+		if !agent.clipboardEnabled {
+			zap.S().Debugf("ignoring VD_AGENT_CLIPBOARD_GRAB because clipboard is disabled")
+			return nil
+		}
+
 		vdAgentClipboardGrab, err := vd.DecodeVDAgentClipboardGrab(vdiAgentMessage.Data)
 		if err != nil {
 			return err
@@ -284,6 +293,11 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 	case vd.VD_AGENT_CLIPBOARD_REQUEST:
+		if !agent.clipboardEnabled {
+			zap.S().Debugf("ignoring VD_AGENT_CLIPBOARD_REQUEST because clipboard is disabled")
+			return nil
+		}
+
 		vdAgentClipboardRequest, err := vd.DecodeVDAgentClipboardRequest(bytes.NewReader(vdiAgentMessage.Data))
 		if err != nil {
 			return err
@@ -294,17 +308,20 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		var data []byte
 		respType := vdAgentClipboardRequest.Type
 
-		if agent.clipboardEnabled {
-			switch respType {
-			case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
-				data = imageopt.OptimizeImage(clipboard.Read(clipboard.FmtImage))
-				respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
-			case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
-				fallthrough
-			default:
-				data = clipboard.Read(clipboard.FmtText)
-				respType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
-			}
+		switch respType {
+		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
+			data = imageopt.OptimizeImage(clipboard.Read(clipboard.FmtImage))
+			respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+		case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
+			fallthrough
+		default:
+			data = clipboard.Read(clipboard.FmtText)
+			respType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+		}
+
+		if len(data) == 0 {
+			zap.S().Debugf("no clipboard data available for requested type %d", respType)
+			return nil
 		}
 
 		ourAgentClipboard := vd.VDAgentClipboard{
