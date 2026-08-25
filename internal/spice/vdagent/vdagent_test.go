@@ -1,10 +1,14 @@
 package vdagent
 
 import (
+	"bytes"
+	"encoding/binary"
+	"io"
 	"runtime"
 	"testing"
 
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
+	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 )
 
 func TestFindSerialPortPath(t *testing.T) {
@@ -80,5 +84,65 @@ func TestSelectGrabRequestType(t *testing.T) {
 				t.Fatalf("expected (%d, %v), got (%d, %v)", tc.expectedType, tc.expectedOK, actualType, actualOK)
 			}
 		})
+	}
+}
+
+func TestSendClipboardData_Chunking(t *testing.T) {
+	var buf bytes.Buffer
+	agent := &VDAgent{
+		vdi: vdi.New(&buf),
+	}
+
+	// 5000 bytes payload (> 2048 max chunk size)
+	payload := make([]byte, 5000)
+	for i := range payload {
+		payload[i] = byte(i % 256)
+	}
+
+	err := agent.sendClipboardData(vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, payload)
+	if err != nil {
+		t.Fatalf("sendClipboardData failed: %v", err)
+	}
+
+	// Read emitted messages back via vdi reader and verify each message is <= 2048 bytes
+	vdiReader := vdi.New(&buf)
+	var reassembledData []byte
+	msgCount := 0
+
+	for {
+		var inner vd.VDAgentMessageInner
+		if err := binary.Read(vdiReader, binary.LittleEndian, &inner); err != nil {
+			break
+		}
+		if inner.Size > 2048 {
+			t.Fatalf("emitted VDAgentMessage size %d exceeds 2048 limit", inner.Size)
+		}
+		if inner.Type != vd.VD_AGENT_CLIPBOARD {
+			t.Fatalf("expected type %d, got %d", vd.VD_AGENT_CLIPBOARD, inner.Type)
+		}
+
+		msgData := make([]byte, inner.Size)
+		if _, err := io.ReadFull(vdiReader, msgData); err != nil {
+			t.Fatalf("failed reading message data: %v", err)
+		}
+
+		if msgCount == 0 {
+			// First message contains 8-byte VDAgentClipboardInner header
+			if len(msgData) < 8 {
+				t.Fatalf("first chunk too short for header: %d", len(msgData))
+			}
+			reassembledData = append(reassembledData, msgData[8:]...)
+		} else {
+			// Continuation chunks contain raw payload
+			reassembledData = append(reassembledData, msgData...)
+		}
+		msgCount++
+	}
+
+	if msgCount != 3 { // 2040 in first chunk + 2048 in second + 912 in third = 5000 bytes
+		t.Fatalf("expected 3 chunks, got %d", msgCount)
+	}
+	if !bytes.Equal(reassembledData, payload) {
+		t.Fatalf("reassembled payload does not match original (len %d vs %d)", len(reassembledData), len(payload))
 	}
 }

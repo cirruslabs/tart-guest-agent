@@ -90,10 +90,7 @@ func New() (*VDAgent, error) {
 	}, nil
 }
 
-func (agent *VDAgent) writeMessage(msgType uint32, data []byte) error {
-	agent.writeMu.Lock()
-	defer agent.writeMu.Unlock()
-
+func (agent *VDAgent) writeMessageLocked(msgType uint32, data []byte) error {
 	msg := vd.VDAgentMessage{
 		VDAgentMessageInner: vd.VDAgentMessageInner{
 			Protocol: vd.VD_AGENT_PROTOCOL,
@@ -108,6 +105,69 @@ func (agent *VDAgent) writeMessage(msgType uint32, data []byte) error {
 	}
 	_, err = agent.vdi.Write(encoded)
 	return err
+}
+
+func (agent *VDAgent) writeMessage(msgType uint32, data []byte) error {
+	agent.writeMu.Lock()
+	defer agent.writeMu.Unlock()
+	return agent.writeMessageLocked(msgType, data)
+}
+
+func (agent *VDAgent) sendClipboardData(selection uint8, clipType uint32, data []byte) error {
+	agent.writeMu.Lock()
+	defer agent.writeMu.Unlock()
+
+	if len(data) == 0 || clipType == vd.VD_AGENT_CLIPBOARD_NONE {
+		ourAgentClipboard := vd.VDAgentClipboard{
+			VDAgentClipboardInner: vd.VDAgentClipboardInner{
+				Selection: selection,
+				Type:      vd.VD_AGENT_CLIPBOARD_NONE,
+			},
+			Data: nil,
+		}
+		encoded, err := ourAgentClipboard.Encode()
+		if err != nil {
+			return err
+		}
+		zap.S().Debugf("O: VD_AGENT_CLIPBOARD (selection=%d, type=NONE)", selection)
+		return agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, encoded)
+	}
+
+	const maxDataSize = 2048
+	const headerSize = 8 // sizeof(VDAgentClipboardInner)
+
+	// First chunk includes VDAgentClipboardInner header (8 bytes) + up to (2048 - 8) bytes of data
+	firstChunkLen := min(len(data), maxDataSize-headerSize)
+	firstChunkPayload := &bytes.Buffer{}
+	inner := vd.VDAgentClipboardInner{
+		Selection: selection,
+		Type:      clipType,
+	}
+	if err := binary.Write(firstChunkPayload, binary.LittleEndian, &inner); err != nil {
+		return err
+	}
+	firstChunkPayload.Write(data[:firstChunkLen])
+
+	zap.S().Debugf("O: VD_AGENT_CLIPBOARD first chunk (type=%d, total=%d bytes, chunk=%d bytes)",
+		clipType, len(data), firstChunkLen)
+	if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, firstChunkPayload.Bytes()); err != nil {
+		return err
+	}
+
+	// Subsequent chunks carry continuation data in separate VD_AGENT_CLIPBOARD messages (up to 2048 bytes each)
+	offset := firstChunkLen
+	for offset < len(data) {
+		chunkLen := min(len(data)-offset, maxDataSize)
+		chunk := data[offset : offset+chunkLen]
+
+		zap.S().Debugf("O: VD_AGENT_CLIPBOARD continuation chunk (offset=%d, chunk=%d bytes)", offset, chunkLen)
+		if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, chunk); err != nil {
+			return err
+		}
+		offset += chunkLen
+	}
+
+	return nil
 }
 
 func (agent *VDAgent) sendCapabilities(request uint32) error {
@@ -357,34 +417,11 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 
 		if len(data) == 0 {
 			zap.S().Debugf("no clipboard data available for requested type %d, replying with VD_AGENT_CLIPBOARD_NONE", respType)
-			ourAgentClipboard := vd.VDAgentClipboard{
-				VDAgentClipboardInner: vd.VDAgentClipboardInner{
-					Selection: vdAgentClipboardRequest.Selection,
-					Type:      vd.VD_AGENT_CLIPBOARD_NONE,
-				},
-				Data: nil,
-			}
-			ourAgentClipboardBytes, err := ourAgentClipboard.Encode()
-			if err != nil {
-				return err
-			}
-			return agent.writeMessage(vd.VD_AGENT_CLIPBOARD, ourAgentClipboardBytes)
+			return agent.sendClipboardData(vdAgentClipboardRequest.Selection, vd.VD_AGENT_CLIPBOARD_NONE, nil)
 		}
 
-		ourAgentClipboard := vd.VDAgentClipboard{
-			VDAgentClipboardInner: vd.VDAgentClipboardInner{
-				Selection: vdAgentClipboardRequest.Selection,
-				Type:      respType,
-			},
-			Data: data,
-		}
-		ourAgentClipboardBytes, err := ourAgentClipboard.Encode()
-		if err != nil {
-			return err
-		}
-
-		zap.S().Debugf("O: VD_AGENT_CLIPBOARD (type=%d, %d bytes)", respType, len(data))
-		return agent.writeMessage(vd.VD_AGENT_CLIPBOARD, ourAgentClipboardBytes)
+		zap.S().Debugf("sending clipboard response (type=%d, %d bytes)", respType, len(data))
+		return agent.sendClipboardData(vdAgentClipboardRequest.Selection, respType, data)
 
 	case vd.VD_AGENT_FILE_XFER_START:
 		startXferMsg, err := vd.DecodeVDAgentFileXferStart(vdiAgentMessage.Data)
