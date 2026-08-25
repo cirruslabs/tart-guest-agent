@@ -344,8 +344,19 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 		if len(data) == 0 {
-			zap.S().Debugf("no clipboard data available for requested type %d", respType)
-			return nil
+			zap.S().Debugf("no clipboard data available for requested type %d, replying with VD_AGENT_CLIPBOARD_NONE", respType)
+			ourAgentClipboard := vd.VDAgentClipboard{
+				VDAgentClipboardInner: vd.VDAgentClipboardInner{
+					Selection: vdAgentClipboardRequest.Selection,
+					Type:      vd.VD_AGENT_CLIPBOARD_NONE,
+				},
+				Data: nil,
+			}
+			ourAgentClipboardBytes, err := ourAgentClipboard.Encode()
+			if err != nil {
+				return err
+			}
+			return agent.writeMessage(vd.VD_AGENT_CLIPBOARD, ourAgentClipboardBytes)
 		}
 
 		ourAgentClipboard := vd.VDAgentClipboard{
