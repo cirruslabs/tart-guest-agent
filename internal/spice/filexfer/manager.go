@@ -289,6 +289,7 @@ func parseMetadata(data []byte) (string, uint64, error) {
 	str := string(bytes.TrimRight(data, "\x00"))
 	var fileName string
 	var fileSize uint64
+	var hasSize bool
 
 	lines := strings.Split(str, "\n")
 	for _, line := range lines {
@@ -302,12 +303,17 @@ func parseMetadata(data []byte) (string, uint64, error) {
 				return "", 0, fmt.Errorf("invalid file size %q: %w", val, err)
 			}
 			fileSize = s
+			hasSize = true
 		}
 	}
 
 	// Fallback: If no INI key-value format was used, check if it is a bare filename
 	if fileName == "" && len(str) > 0 && !strings.Contains(str, "[") {
 		fileName = strings.TrimSpace(lines[0])
+	}
+
+	if !hasSize {
+		return "", 0, fmt.Errorf("missing required 'size=' in transfer metadata")
 	}
 
 	return fileName, fileSize, nil

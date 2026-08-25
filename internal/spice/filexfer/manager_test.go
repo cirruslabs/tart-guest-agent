@@ -78,7 +78,7 @@ func TestFileXferManager_Cancel(t *testing.T) {
 
 	startMsg := &vd.VDAgentFileXferStart{
 		ID:   99,
-		Data: []byte("name=aborted_file.svg\n"),
+		Data: []byte("name=aborted_file.svg\nsize=100\n"),
 	}
 
 	_, err = mgr.HandleStart(startMsg)
@@ -103,7 +103,7 @@ func TestFileXferManager_DuplicateTaskID(t *testing.T) {
 	// First transfer with ID 55
 	_, err = mgr.HandleStart(&vd.VDAgentFileXferStart{
 		ID:   55,
-		Data: []byte("name=first.txt\n"),
+		Data: []byte("name=first.txt\nsize=10\n"),
 	})
 	require.NoError(t, err)
 	firstPath := filepath.Join(tempDir, "first.txt")
@@ -112,7 +112,7 @@ func TestFileXferManager_DuplicateTaskID(t *testing.T) {
 	// Second transfer with same ID 55 should clean up previous
 	_, err = mgr.HandleStart(&vd.VDAgentFileXferStart{
 		ID:   55,
-		Data: []byte("name=second.txt\n"),
+		Data: []byte("name=second.txt\nsize=20\n"),
 	})
 	require.NoError(t, err)
 	assert.NoFileExists(t, firstPath)
@@ -165,7 +165,7 @@ func TestFileXferManager_MaxActiveTransfers(t *testing.T) {
 	for i := uint32(0); i < filexfer.MaxActiveTransfers; i++ {
 		startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
 			ID:   i,
-			Data: []byte("name=file.bin\n"),
+			Data: []byte("name=file.bin\nsize=10\n"),
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus.Result)
@@ -174,7 +174,7 @@ func TestFileXferManager_MaxActiveTransfers(t *testing.T) {
 	// 65th transfer exceeding limit
 	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
 		ID:   9999,
-		Data: []byte("name=overflow.bin\n"),
+		Data: []byte("name=overflow.bin\nsize=10\n"),
 	})
 	assert.Error(t, err)
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus.Result)
@@ -261,6 +261,26 @@ func TestFileXferManager_ReservedSpace(t *testing.T) {
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE), startStatus2.Result)
 	assert.NoFileExists(t, filepath.Join(tempDir, "part2.bin"))
 }
+
+func TestFileXferManager_MissingSize(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_nosize_test_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	// Missing size field
+	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   103,
+		Data: []byte("name=missing_size.bin\n"),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus.Result)
+	assert.NoFileExists(t, filepath.Join(tempDir, "missing_size.bin"))
+}
+
 
 
 
