@@ -375,6 +375,10 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			zap.S().Errorf("failed handling file transfer data: %v", err)
 		}
 
+		if statusResp == nil {
+			return nil
+		}
+
 		statusBytes, err := statusResp.Encode()
 		if err != nil {
 			return err

@@ -32,7 +32,7 @@ func TestFileXferManager_EndToEnd(t *testing.T) {
 	assert.Equal(t, uint32(42), startStatus.ID)
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus.Result)
 
-	// 2. Send data chunk 1 (23 bytes)
+	// 2. Send data chunk 1 (23 bytes) -> intermediate chunk, no status reply needed
 	chunk1 := []byte("%PDF-1.4 Mock PDF Data ")
 	dataMsg1 := &vd.VDAgentFileXferData{
 		ID:   42,
@@ -42,7 +42,7 @@ func TestFileXferManager_EndToEnd(t *testing.T) {
 	status1, completed1, err := mgr.HandleData(dataMsg1)
 	require.NoError(t, err)
 	assert.False(t, completed1)
-	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), status1.Result)
+	assert.Nil(t, status1)
 
 	// 3. Send data chunk 2 (23 bytes) -> completes transfer at totalSize
 	chunk2 := []byte("Additional Stream Chunk")
@@ -54,6 +54,7 @@ func TestFileXferManager_EndToEnd(t *testing.T) {
 	status2, completed2, err := mgr.HandleData(dataMsg2)
 	require.NoError(t, err)
 	assert.True(t, completed2)
+	assert.NotNil(t, status2)
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS), status2.Result)
 
 	// 4. Verify file exists on disk with correct content
@@ -196,4 +197,33 @@ func TestFileXferManager_NotEnoughSpace(t *testing.T) {
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE), startStatus.Result)
 	assert.NoFileExists(t, filepath.Join(tempDir, "gigantic_file.iso"))
 }
+
+func TestFileXferManager_MalformedSize(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_malformed_test_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	// Malformed size exceeding uint64 overflow
+	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   91,
+		Data: []byte("name=bad_size.bin\nsize=18446744073709551616\n"),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus.Result)
+	assert.NoFileExists(t, filepath.Join(tempDir, "bad_size.bin"))
+
+	// Non-numeric size
+	startStatus2, err2 := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   92,
+		Data: []byte("name=nan_size.bin\nsize=not_a_number\n"),
+	})
+	assert.Error(t, err2)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus2.Result)
+	assert.NoFileExists(t, filepath.Join(tempDir, "nan_size.bin"))
+}
+
 

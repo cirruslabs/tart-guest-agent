@@ -82,7 +82,14 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 		}
 	}
 
-	fileName, fileSize := parseMetadata(msg.Data)
+	fileName, fileSize, err := parseMetadata(msg.Data)
+	if err != nil {
+		zap.S().Errorf("filexfer: failed parsing transfer metadata for task id=%d: %v", msg.ID, err)
+		return &vd.VDAgentFileXferStatus{
+			ID:     msg.ID,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, err
+	}
 	if fileName == "" {
 		fileName = fmt.Sprintf("tart_transfer_%d.dat", msg.ID)
 	}
@@ -193,10 +200,8 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 		return m.finishTask(task)
 	}
 
-	return &vd.VDAgentFileXferStatus{
-		ID:     msg.ID,
-		Result: vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA,
-	}, false, nil
+	// Intermediate chunks do not emit status responses (avoids concurrent async read storms)
+	return nil, false, nil
 }
 
 func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, bool, error) {
@@ -263,7 +268,7 @@ func (m *Manager) Close() {
 	}
 }
 
-func parseMetadata(data []byte) (string, uint64) {
+func parseMetadata(data []byte) (string, uint64, error) {
 	str := string(bytes.TrimRight(data, "\x00"))
 	var fileName string
 	var fileSize uint64
@@ -274,9 +279,12 @@ func parseMetadata(data []byte) (string, uint64) {
 		if strings.HasPrefix(line, "name=") {
 			fileName = strings.TrimPrefix(line, "name=")
 		} else if strings.HasPrefix(line, "size=") {
-			if s, err := strconv.ParseUint(strings.TrimPrefix(line, "size="), 10, 64); err == nil {
-				fileSize = s
+			val := strings.TrimPrefix(line, "size=")
+			s, err := strconv.ParseUint(val, 10, 64)
+			if err != nil {
+				return "", 0, fmt.Errorf("invalid file size %q: %w", val, err)
 			}
+			fileSize = s
 		}
 	}
 
@@ -285,7 +293,7 @@ func parseMetadata(data []byte) (string, uint64) {
 		fileName = strings.TrimSpace(lines[0])
 	}
 
-	return fileName, fileSize
+	return fileName, fileSize, nil
 }
 
 func getUniqueFilePath(path string) (string, error) {
