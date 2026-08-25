@@ -198,6 +198,19 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 		return m.finishTask(task)
 	}
 
+	// Reject chunk before writing if it would cause received bytes to exceed total advertised size
+	if task.bytesRcvd+uint64(len(msg.Data)) > task.totalSize {
+		zap.S().Errorf("filexfer: task id=%d chunk (%d bytes) exceeds total advertised size (%d bytes, received %d bytes)",
+			task.id, len(msg.Data), task.totalSize, task.bytesRcvd)
+		_ = task.file.Close()
+		_ = os.Remove(task.targetPath)
+		delete(m.tasks, msg.ID)
+		return &vd.VDAgentFileXferStatus{
+			ID:     msg.ID,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, false, fmt.Errorf("chunk size exceeds advertised file size")
+	}
+
 	n, err := task.file.Write(msg.Data)
 	if err != nil {
 		zap.S().Errorf("filexfer: failed writing to %s: %v", task.targetPath, err)
@@ -212,8 +225,8 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 
 	task.bytesRcvd += uint64(n)
 
-	// If totalSize was specified and reached
-	if task.totalSize > 0 && task.bytesRcvd >= task.totalSize {
+	// If totalSize was reached
+	if task.bytesRcvd >= task.totalSize {
 		return m.finishTask(task)
 	}
 
@@ -241,7 +254,7 @@ func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, boo
 		}, false, err
 	}
 
-	if task.totalSize > 0 && task.bytesRcvd != task.totalSize {
+	if task.bytesRcvd != task.totalSize {
 		zap.S().Errorf("filexfer: size mismatch for %s: expected %d bytes, received %d bytes",
 			task.targetPath, task.totalSize, task.bytesRcvd)
 		_ = os.Remove(task.targetPath)

@@ -281,6 +281,35 @@ func TestFileXferManager_MissingSize(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(tempDir, "missing_size.bin"))
 }
 
+func TestFileXferManager_OversizedChunk(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_oversized_test_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   104,
+		Data: []byte("name=capped.bin\nsize=10\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus.Result)
+
+	// Send chunk of 20 bytes (exceeds advertised size 10)
+	status, completed, err := mgr.HandleData(&vd.VDAgentFileXferData{
+		ID:   104,
+		Size: 20,
+		Data: []byte("12345678901234567890"),
+	})
+	assert.Error(t, err)
+	assert.False(t, completed)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), status.Result)
+	assert.NoFileExists(t, filepath.Join(tempDir, "capped.bin"))
+}
+
+
 
 
 

@@ -138,27 +138,32 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 	// Goroutine 1: Guest -> Host Clipboard Watcher (only if clipboard is enabled)
 	if agent.clipboardEnabled {
 		g.Go(func() error {
-			clipboardCh := clipboard.Watch(gCtx)
+			textCh := clipboard.Watch(gCtx, clipboard.FmtText)
+			imageCh := clipboard.Watch(gCtx, clipboard.FmtImage)
+
 			for {
 				select {
 				case <-gCtx.Done():
 					return gCtx.Err()
-				case newClipboardState, ok := <-clipboardCh:
+				case textData, ok := <-textCh:
 					if !ok {
 						return nil
 					}
-					var clipType uint32
-					if newClipboardState.Format == clipboard.FmtImage {
-						clipType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
-					} else {
-						clipType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
-					}
-
-					if err := agent.processClipboardState(newClipboardState.Bytes, clipType); err != nil {
+					if err := agent.processClipboardState(textData.Bytes, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT); err != nil {
 						if gCtx.Err() != nil {
 							return gCtx.Err()
 						}
-						return fmt.Errorf("failed to process clipboard state: %w", err)
+						return fmt.Errorf("failed to process text clipboard state: %w", err)
+					}
+				case imgData, ok := <-imageCh:
+					if !ok {
+						return nil
+					}
+					if err := agent.processClipboardState(imgData.Bytes, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG); err != nil {
+						if gCtx.Err() != nil {
+							return gCtx.Err()
+						}
+						return fmt.Errorf("failed to process image clipboard state: %w", err)
 					}
 				}
 			}
