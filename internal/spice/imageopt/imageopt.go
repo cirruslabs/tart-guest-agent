@@ -2,6 +2,8 @@ package imageopt
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"image"
 	"image/png"
 
@@ -21,32 +23,42 @@ const (
 	MaxPixels = 8192 * 8192
 )
 
-// OptimizeImage inspects image dimensions and decodes incoming image formats
-// (TIFF, BMP, PNG, JPEG, GIF) into a compressed PNG if within safe bounds.
-func OptimizeImage(data []byte) []byte {
-	if len(data) == 0 || len(data) > MaxRecommendedSize {
-		return data
+var (
+	ErrEmptyData         = errors.New("empty image data")
+	ErrOversizedPayload  = errors.New("image payload exceeds maximum recommended size")
+	ErrInvalidDimensions = errors.New("image dimensions exceed safety limits")
+)
+
+// OptimizeImage inspects image dimensions and safely transcodes incoming image formats
+// (TIFF, BMP, PNG, JPEG, GIF) into verified PNG bytes. Returns an error if the image
+// is invalid or exceeds safety bounds, ensuring unsafe rasters are rejected.
+func OptimizeImage(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, ErrEmptyData
+	}
+	if len(data) > MaxRecommendedSize {
+		return nil, fmt.Errorf("%w: %d > %d", ErrOversizedPayload, len(data), MaxRecommendedSize)
 	}
 
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return data
+		return nil, fmt.Errorf("failed to decode image config: %w", err)
 	}
 
 	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxDimension || cfg.Height > MaxDimension || int64(cfg.Width)*int64(cfg.Height) > MaxPixels {
-		return data
+		return nil, fmt.Errorf("%w: width=%d height=%d", ErrInvalidDimensions, cfg.Width, cfg.Height)
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return data
+		return nil, fmt.Errorf("failed to decode image raster: %w", err)
 	}
 
 	var buf bytes.Buffer
 	encoder := png.Encoder{CompressionLevel: png.DefaultCompression}
 	if err := encoder.Encode(&buf, img); err != nil {
-		return data
+		return nil, fmt.Errorf("failed to encode PNG: %w", err)
 	}
 
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }

@@ -2,6 +2,8 @@ package imageopt
 
 import (
 	"bytes"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -23,7 +25,8 @@ func TestOptimizeImage(t *testing.T) {
 	err := png.Encode(&rawBuf, img)
 	require.NoError(t, err)
 
-	optimized := OptimizeImage(rawBuf.Bytes())
+	optimized, err := OptimizeImage(rawBuf.Bytes())
+	require.NoError(t, err)
 	require.NotEmpty(t, optimized)
 	require.LessOrEqual(t, len(optimized), MaxRecommendedSize)
 
@@ -38,26 +41,35 @@ func TestOptimizeImage(t *testing.T) {
 func TestOptimizeImage_OversizedPayload(t *testing.T) {
 	// Exceeds MaxRecommendedSize
 	oversized := make([]byte, MaxRecommendedSize+1)
-	result := OptimizeImage(oversized)
-	require.Equal(t, len(oversized), len(result))
+	result, err := OptimizeImage(oversized)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrOversizedPayload)
 }
 
 func TestOptimizeImage_ExcessiveDimensions(t *testing.T) {
 	// 8-byte PNG header + IHDR chunk with dimensions 10000x10000 (> MaxDimension)
 	var hdr bytes.Buffer
 	hdr.Write([]byte("\x89PNG\r\n\x1a\n"))
-	// IHDR chunk: length (13), chunk type (IHDR), width (10000), height (10000), bit depth (8), color type (6), comp (0), filter (0), interlace (0)
-	ihdrData := []byte{
-		0x00, 0x00, 0x00, 0x0d, // length
+
+	ihdrBody := []byte{
 		'I', 'H', 'D', 'R',
 		0x00, 0x00, 0x27, 0x10, // width: 10000
 		0x00, 0x00, 0x27, 0x10, // height: 10000
-		0x08, 0x06, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, // dummy crc
+		0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit truecolor with alpha
 	}
-	hdr.Write(ihdrData)
+	crc := crc32.ChecksumIEEE(ihdrBody)
 
-	result := OptimizeImage(hdr.Bytes())
-	// Should return input without trying to allocate/decode a 10000x10000 raster
-	require.Equal(t, hdr.Bytes(), result)
+	// Length (13)
+	hdr.Write([]byte{0x00, 0x00, 0x00, 0x0d})
+	hdr.Write(ihdrBody)
+	// CRC (4 bytes big-endian)
+	crcBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(crcBytes, crc)
+	hdr.Write(crcBytes)
+
+	result, err := OptimizeImage(hdr.Bytes())
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrInvalidDimensions)
 }

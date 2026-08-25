@@ -290,7 +290,12 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 
 		switch vdAgentClipboard.Type {
 		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
-			optimized := imageopt.OptimizeImage(vdAgentClipboard.Data)
+			optimized, err := imageopt.OptimizeImage(vdAgentClipboard.Data)
+			if err != nil {
+				zap.S().Warnf("ignoring invalid/unsafe incoming clipboard image (%d bytes): %v", len(vdAgentClipboard.Data), err)
+				return nil
+			}
+
 			agent.clipMu.Lock()
 			agent.lastClipboardState = optimized
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
@@ -334,8 +339,15 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 
 		switch respType {
 		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
-			data = imageopt.OptimizeImage(clipboard.Read(clipboard.FmtImage))
-			respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+			rawImg := clipboard.Read(clipboard.FmtImage)
+			if len(rawImg) > 0 {
+				if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
+					data = optimized
+					respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+				} else {
+					zap.S().Warnf("failed to optimize local clipboard image for request: %v", err)
+				}
+			}
 		case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
 			fallthrough
 		default:
