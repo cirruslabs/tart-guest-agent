@@ -150,3 +150,50 @@ func TestFileXferManager_SizeMismatch(t *testing.T) {
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), status.Result)
 	assert.NoFileExists(t, filepath.Join(tempDir, "short.bin"))
 }
+
+func TestFileXferManager_MaxActiveTransfers(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_limit_test_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	for i := uint32(0); i < filexfer.MaxActiveTransfers; i++ {
+		startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+			ID:   i,
+			Data: []byte("name=file.bin\n"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus.Result)
+	}
+
+	// 65th transfer exceeding limit
+	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   9999,
+		Data: []byte("name=overflow.bin\n"),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus.Result)
+}
+
+func TestFileXferManager_NotEnoughSpace(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_space_test_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	// Exceedingly large file size (e.g. 100 Exabytes)
+	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   88,
+		Data: []byte("name=gigantic_file.iso\nsize=18446744073709551610\n"),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE), startStatus.Result)
+	assert.NoFileExists(t, filepath.Join(tempDir, "gigantic_file.iso"))
+}
+

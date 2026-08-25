@@ -63,14 +63,40 @@ func (m *Manager) SetDownloadDir(dir string) {
 	m.downloadDir = dir
 }
 
+// MaxActiveTransfers bounds the maximum number of concurrent active transfer tasks.
+const MaxActiveTransfers = 64
+
 // HandleStart initiates a new file transfer from VDAgentFileXferStart metadata.
 func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXferStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Bound the number of active transfers to prevent resource/FD exhaustion
+	if len(m.tasks) >= MaxActiveTransfers {
+		if _, exists := m.tasks[msg.ID]; !exists {
+			zap.S().Warnf("filexfer: active transfer limit (%d) reached, rejecting task id=%d", MaxActiveTransfers, msg.ID)
+			return &vd.VDAgentFileXferStatus{
+				ID:     msg.ID,
+				Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+			}, fmt.Errorf("active transfer limit (%d) reached", MaxActiveTransfers)
+		}
+	}
+
 	fileName, fileSize := parseMetadata(msg.Data)
 	if fileName == "" {
 		fileName = fmt.Sprintf("tart_transfer_%d.dat", msg.ID)
+	}
+
+	// Reject oversized transfers before creating files or inviting data
+	if fileSize > 0 {
+		if avail, err := getAvailableDiskSpace(m.downloadDir); err == nil && avail < fileSize {
+			zap.S().Warnf("filexfer: not enough disk space for %s: requires %d bytes, available %d bytes",
+				fileName, fileSize, avail)
+			return &vd.VDAgentFileXferStatus{
+				ID:     msg.ID,
+				Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
+			}, fmt.Errorf("not enough disk space: required %d bytes, available %d bytes", fileSize, avail)
+		}
 	}
 
 	// Sanitize filename to prevent directory traversal
