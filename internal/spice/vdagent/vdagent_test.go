@@ -24,47 +24,60 @@ func TestFindSerialPortPath(t *testing.T) {
 
 func TestSelectGrabRequestType(t *testing.T) {
 	tests := []struct {
-		name     string
-		types    []uint32
-		expected uint32
+		name         string
+		types        []uint32
+		expectedType uint32
+		expectedOK   bool
 	}{
 		{
-			name:     "empty types defaults to UTF8_TEXT",
-			types:    []uint32{},
-			expected: vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+			name:         "empty types returns false",
+			types:        []uint32{},
+			expectedType: 0,
+			expectedOK:   false,
 		},
 		{
-			name:     "single UTF8_TEXT",
-			types:    []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT},
-			expected: vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+			name:         "unsupported file list type returns false",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_FILE_LIST},
+			expectedType: 0,
+			expectedOK:   false,
 		},
 		{
-			name:     "single PNG",
-			types:    []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG},
-			expected: vd.VD_AGENT_CLIPBOARD_IMAGE_PNG,
+			name:         "single UTF8_TEXT",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT},
+			expectedType: vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+			expectedOK:   true,
 		},
 		{
-			name:     "image prioritized over UTF8_TEXT when text is first",
-			types:    []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG},
-			expected: vd.VD_AGENT_CLIPBOARD_IMAGE_PNG,
+			name:         "single PNG",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG},
+			expectedType: vd.VD_AGENT_CLIPBOARD_IMAGE_PNG,
+			expectedOK:   true,
 		},
 		{
-			name:     "UTF8_TEXT selected when preceded by unsupported extension type",
-			types:    []uint32{999 /* unsupported format */, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT},
-			expected: vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+			name:         "image prioritized over UTF8_TEXT when text is first",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG},
+			expectedType: vd.VD_AGENT_CLIPBOARD_IMAGE_PNG,
+			expectedOK:   true,
 		},
 		{
-			name:     "unknown types fallback to first entry",
-			types:    []uint32{888, 777},
-			expected: 888,
+			name:         "UTF8_TEXT selected when preceded by unsupported extension type",
+			types:        []uint32{999 /* unsupported format */, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT},
+			expectedType: vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+			expectedOK:   true,
+		},
+		{
+			name:         "all unknown types return false",
+			types:        []uint32{888, 777},
+			expectedType: 0,
+			expectedOK:   false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := selectGrabRequestType(tc.types)
-			if actual != tc.expected {
-				t.Fatalf("expected type %d, got %d", tc.expected, actual)
+			actualType, actualOK := selectGrabRequestType(tc.types)
+			if actualOK != tc.expectedOK || actualType != tc.expectedType {
+				t.Fatalf("expected (%d, %v), got (%d, %v)", tc.expectedType, tc.expectedOK, actualType, actualOK)
 			}
 		})
 	}

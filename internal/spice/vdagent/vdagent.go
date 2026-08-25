@@ -202,24 +202,21 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
-func selectGrabRequestType(types []uint32) uint32 {
+func selectGrabRequestType(types []uint32) (uint32, bool) {
 	for _, t := range types {
 		if t == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG ||
 			t == vd.VD_AGENT_CLIPBOARD_IMAGE_BMP ||
 			t == vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF ||
 			t == vd.VD_AGENT_CLIPBOARD_IMAGE_JPG {
-			return t
+			return t, true
 		}
 	}
 	for _, t := range types {
 		if t == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
-			return t
+			return t, true
 		}
 	}
-	if len(types) > 0 {
-		return types[0]
-	}
-	return vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+	return 0, false
 }
 
 func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
@@ -248,10 +245,20 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			return err
 		}
 
-		zap.S().Debugf("I: VD_AGENT_CLIPBOARD_GRAB (%d bytes): %s",
-			len(vdiAgentMessage.Data), vdAgentClipboardGrab)
+		zap.S().Debugf("I: VD_AGENT_CLIPBOARD_GRAB (%d bytes, selection=%d): %s",
+			len(vdiAgentMessage.Data), vdAgentClipboardGrab.Selection, vdAgentClipboardGrab)
 
-		reqType := selectGrabRequestType(vdAgentClipboardGrab.Types)
+		// Ignore non-CLIPBOARD selections (e.g. PRIMARY/SECONDARY)
+		if vdAgentClipboardGrab.Selection != vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD {
+			zap.S().Debugf("ignoring grab for non-clipboard selection %d", vdAgentClipboardGrab.Selection)
+			return nil
+		}
+
+		reqType, ok := selectGrabRequestType(vdAgentClipboardGrab.Types)
+		if !ok {
+			zap.S().Debugf("ignoring grab with unsupported format types: %v", vdAgentClipboardGrab.Types)
+			return nil
+		}
 
 		ourClipboardRequest := vd.VDAgentClipboardRequest{
 			Selection: vdAgentClipboardGrab.Selection,
@@ -273,6 +280,12 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		vdAgentClipboard, err := vd.DecodeVDAgentClipboard(vdiAgentMessage.Data)
 		if err != nil {
 			return err
+		}
+
+		// Ignore non-CLIPBOARD selections
+		if vdAgentClipboard.Selection != vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD {
+			zap.S().Debugf("ignoring clipboard data for non-clipboard selection %d", vdAgentClipboard.Selection)
+			return nil
 		}
 
 		switch vdAgentClipboard.Type {
@@ -309,6 +322,12 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 		zap.S().Debugf("I: VD_AGENT_CLIPBOARD_REQUEST: %s", vdAgentClipboardRequest)
+
+		// Ignore non-CLIPBOARD selections
+		if vdAgentClipboardRequest.Selection != vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD {
+			zap.S().Debugf("ignoring clipboard request for non-clipboard selection %d", vdAgentClipboardRequest.Selection)
+			return nil
+		}
 
 		var data []byte
 		respType := vdAgentClipboardRequest.Type
