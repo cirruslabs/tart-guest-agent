@@ -50,6 +50,7 @@ func New() (*VDAgent, error) {
 	}
 
 	if err := clipboard.Init(); err != nil {
+		_ = sp.Close()
 		return nil, err
 	}
 
