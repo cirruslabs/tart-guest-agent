@@ -13,3 +13,8 @@ func getAvailableDiskSpace(path string) (uint64, error) {
 	}
 	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
 }
+
+// GetAvailableDiskSpace returns free filesystem bytes available for unprivileged users.
+func GetAvailableDiskSpace(path string) (uint64, error) {
+	return getAvailableDiskSpace(path)
+}

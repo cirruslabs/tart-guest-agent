@@ -29,3 +29,8 @@ func getAvailableDiskSpace(path string) (uint64, error) {
 	}
 	return freeBytesAvailable, nil
 }
+
+// GetAvailableDiskSpace returns free filesystem bytes available for unprivileged users.
+func GetAvailableDiskSpace(path string) (uint64, error) {
+	return getAvailableDiskSpace(path)
+}

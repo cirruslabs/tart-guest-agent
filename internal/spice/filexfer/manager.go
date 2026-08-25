@@ -94,15 +94,32 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 		fileName = fmt.Sprintf("tart_transfer_%d.dat", msg.ID)
 	}
 
+	// Calculate reserved space for currently active transfers (excluding any task replaced by msg.ID)
+	var reservedSpace uint64
+	for id, t := range m.tasks {
+		if id == msg.ID {
+			continue
+		}
+		if t.totalSize > t.bytesRcvd {
+			reservedSpace += (t.totalSize - t.bytesRcvd)
+		}
+	}
+
 	// Reject oversized transfers before creating files or inviting data
 	if fileSize > 0 {
-		if avail, err := getAvailableDiskSpace(m.downloadDir); err == nil && avail < fileSize {
-			zap.S().Warnf("filexfer: not enough disk space for %s: requires %d bytes, available %d bytes",
-				fileName, fileSize, avail)
-			return &vd.VDAgentFileXferStatus{
-				ID:     msg.ID,
-				Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
-			}, fmt.Errorf("not enough disk space: required %d bytes, available %d bytes", fileSize, avail)
+		if avail, err := getAvailableDiskSpace(m.downloadDir); err == nil {
+			var unreservedAvail uint64
+			if avail > reservedSpace {
+				unreservedAvail = avail - reservedSpace
+			}
+			if unreservedAvail < fileSize {
+				zap.S().Warnf("filexfer: not enough disk space for %s: requires %d bytes, available %d bytes (reserved %d bytes)",
+					fileName, fileSize, avail, reservedSpace)
+				return &vd.VDAgentFileXferStatus{
+					ID:     msg.ID,
+					Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
+				}, fmt.Errorf("not enough disk space: required %d bytes, available %d bytes (reserved %d bytes)", fileSize, avail, reservedSpace)
+			}
 		}
 	}
 

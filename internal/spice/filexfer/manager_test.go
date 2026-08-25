@@ -1,6 +1,7 @@
 package filexfer_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -225,5 +226,41 @@ func TestFileXferManager_MalformedSize(t *testing.T) {
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus2.Result)
 	assert.NoFileExists(t, filepath.Join(tempDir, "nan_size.bin"))
 }
+
+func TestFileXferManager_ReservedSpace(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_reserved_test_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	avail, err := filexfer.GetAvailableDiskSpace(tempDir)
+	require.NoError(t, err)
+	if avail < 1000 {
+		t.Skip("insufficient disk space for test")
+	}
+
+	// Task 1 requests 60% of available space
+	size1 := (avail * 6) / 10
+	startStatus1, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   101,
+		Data: []byte(fmt.Sprintf("name=part1.bin\nsize=%d\n", size1)),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus1.Result)
+
+	// Task 2 requests 50% of available space -> combined exceeds 100% of available space
+	size2 := (avail * 5) / 10
+	startStatus2, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   102,
+		Data: []byte(fmt.Sprintf("name=part2.bin\nsize=%d\n", size2)),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE), startStatus2.Result)
+	assert.NoFileExists(t, filepath.Join(tempDir, "part2.bin"))
+}
+
 
 
