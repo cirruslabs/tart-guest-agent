@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
@@ -19,10 +22,33 @@ import (
 )
 
 func findSerialPortPath() string {
+	if runtime.GOOS == "linux" {
+		candidates := []string{
+			"/dev/virtio-ports/com.redhat.spice.0",
+		}
+		// Also scan /sys/class/virtio-ports to resolve the device dynamically
+		if entries, err := os.ReadDir("/sys/class/virtio-ports"); err == nil {
+			for _, entry := range entries {
+				nameBytes, err := os.ReadFile(filepath.Join("/sys/class/virtio-ports", entry.Name(), "name"))
+				if err == nil && strings.TrimSpace(string(nameBytes)) == "com.redhat.spice.0" {
+					candidates = append(candidates, filepath.Join("/dev", entry.Name()))
+				}
+			}
+		}
+		candidates = append(candidates, "/dev/tty.com.redhat.spice.0")
+
+		for _, path := range candidates {
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+		}
+		return "/dev/virtio-ports/com.redhat.spice.0"
+	}
+
+	// Darwin / macOS guests
 	candidates := []string{
 		"/dev/tty.com.redhat.spice.0",
-		"/dev/virtio-ports/com.redhat.spice.0",
-		"/dev/vport7p0",
+		"/dev/cu.com.redhat.spice.0",
 	}
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {
