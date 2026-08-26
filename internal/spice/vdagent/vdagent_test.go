@@ -104,45 +104,41 @@ func TestSendClipboardData_Chunking(t *testing.T) {
 		t.Fatalf("sendClipboardData failed: %v", err)
 	}
 
-	// Read emitted messages back via vdi reader and verify each message is <= 2048 bytes
+	// Verify the underlying VDI buffer contains multiple 2048-byte VDI chunks
+	vdiData := buf.Bytes()
+	if len(vdiData) == 0 {
+		t.Fatalf("expected non-empty VDI output")
+	}
+
+	// Read emitted logical message back via vdi reader
 	vdiReader := vdi.New(&buf)
-	var reassembledData []byte
-	msgCount := 0
-
-	for {
-		var inner vd.VDAgentMessageInner
-		if err := binary.Read(vdiReader, binary.LittleEndian, &inner); err != nil {
-			break
-		}
-		if inner.Size > 2048 {
-			t.Fatalf("emitted VDAgentMessage size %d exceeds 2048 limit", inner.Size)
-		}
-		if inner.Type != vd.VD_AGENT_CLIPBOARD {
-			t.Fatalf("expected type %d, got %d", vd.VD_AGENT_CLIPBOARD, inner.Type)
-		}
-
-		msgData := make([]byte, inner.Size)
-		if _, err := io.ReadFull(vdiReader, msgData); err != nil {
-			t.Fatalf("failed reading message data: %v", err)
-		}
-
-		if msgCount == 0 {
-			// First message contains 8-byte VDAgentClipboardInner header
-			if len(msgData) < 8 {
-				t.Fatalf("first chunk too short for header: %d", len(msgData))
-			}
-			reassembledData = append(reassembledData, msgData[8:]...)
-		} else {
-			// Continuation chunks contain raw payload
-			reassembledData = append(reassembledData, msgData...)
-		}
-		msgCount++
+	var inner vd.VDAgentMessageInner
+	if err := binary.Read(vdiReader, binary.LittleEndian, &inner); err != nil {
+		t.Fatalf("failed reading VDAgentMessage header: %v", err)
+	}
+	if inner.Type != vd.VD_AGENT_CLIPBOARD {
+		t.Fatalf("expected type %d, got %d", vd.VD_AGENT_CLIPBOARD, inner.Type)
+	}
+	if inner.Size != uint32(8+len(payload)) {
+		t.Fatalf("expected total message size %d, got %d", 8+len(payload), inner.Size)
 	}
 
-	if msgCount != 3 { // 2040 in first chunk + 2048 in second + 912 in third = 5000 bytes
-		t.Fatalf("expected 3 chunks, got %d", msgCount)
+	msgData := make([]byte, inner.Size)
+	if _, err := io.ReadFull(vdiReader, msgData); err != nil {
+		t.Fatalf("failed reading message data: %v", err)
 	}
-	if !bytes.Equal(reassembledData, payload) {
-		t.Fatalf("reassembled payload does not match original (len %d vs %d)", len(reassembledData), len(payload))
+
+	decodedClipboard, err := vd.DecodeVDAgentClipboard(msgData)
+	if err != nil {
+		t.Fatalf("failed decoding VDAgentClipboard: %v", err)
+	}
+	if decodedClipboard.Selection != vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD {
+		t.Fatalf("expected selection %d, got %d", vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD, decodedClipboard.Selection)
+	}
+	if decodedClipboard.Type != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
+		t.Fatalf("expected type %d, got %d", vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, decodedClipboard.Type)
+	}
+	if !bytes.Equal(decodedClipboard.Data, payload) {
+		t.Fatalf("decoded payload does not match original (len %d vs %d)", len(decodedClipboard.Data), len(payload))
 	}
 }

@@ -117,57 +117,27 @@ func (agent *VDAgent) sendClipboardData(selection uint8, clipType uint32, data [
 	agent.writeMu.Lock()
 	defer agent.writeMu.Unlock()
 
-	if len(data) == 0 || clipType == vd.VD_AGENT_CLIPBOARD_NONE {
-		ourAgentClipboard := vd.VDAgentClipboard{
-			VDAgentClipboardInner: vd.VDAgentClipboardInner{
-				Selection: selection,
-				Type:      vd.VD_AGENT_CLIPBOARD_NONE,
-			},
-			Data: nil,
-		}
-		encoded, err := ourAgentClipboard.Encode()
-		if err != nil {
-			return err
-		}
-		zap.S().Debugf("O: VD_AGENT_CLIPBOARD (selection=%d, type=NONE)", selection)
-		return agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, encoded)
+	var payload []byte
+	if clipType != vd.VD_AGENT_CLIPBOARD_NONE && len(data) > 0 {
+		payload = data
+	} else {
+		clipType = vd.VD_AGENT_CLIPBOARD_NONE
 	}
 
-	const maxDataSize = 2048
-	const headerSize = 8 // sizeof(VDAgentClipboardInner)
-
-	// First chunk includes VDAgentClipboardInner header (8 bytes) + up to (2048 - 8) bytes of data
-	firstChunkLen := min(len(data), maxDataSize-headerSize)
-	firstChunkPayload := &bytes.Buffer{}
-	inner := vd.VDAgentClipboardInner{
-		Selection: selection,
-		Type:      clipType,
+	ourAgentClipboard := vd.VDAgentClipboard{
+		VDAgentClipboardInner: vd.VDAgentClipboardInner{
+			Selection: selection,
+			Type:      clipType,
+		},
+		Data: payload,
 	}
-	if err := binary.Write(firstChunkPayload, binary.LittleEndian, &inner); err != nil {
-		return err
-	}
-	firstChunkPayload.Write(data[:firstChunkLen])
-
-	zap.S().Debugf("O: VD_AGENT_CLIPBOARD first chunk (type=%d, total=%d bytes, chunk=%d bytes)",
-		clipType, len(data), firstChunkLen)
-	if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, firstChunkPayload.Bytes()); err != nil {
+	encoded, err := ourAgentClipboard.Encode()
+	if err != nil {
 		return err
 	}
 
-	// Subsequent chunks carry continuation data in separate VD_AGENT_CLIPBOARD messages (up to 2048 bytes each)
-	offset := firstChunkLen
-	for offset < len(data) {
-		chunkLen := min(len(data)-offset, maxDataSize)
-		chunk := data[offset : offset+chunkLen]
-
-		zap.S().Debugf("O: VD_AGENT_CLIPBOARD continuation chunk (offset=%d, chunk=%d bytes)", offset, chunkLen)
-		if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, chunk); err != nil {
-			return err
-		}
-		offset += chunkLen
-	}
-
-	return nil
+	zap.S().Debugf("O: VD_AGENT_CLIPBOARD (selection=%d, type=%d, %d bytes)", selection, clipType, len(payload))
+	return agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD, encoded)
 }
 
 func (agent *VDAgent) sendCapabilities(request uint32) error {
