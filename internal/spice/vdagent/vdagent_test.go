@@ -148,3 +148,29 @@ func TestSendClipboardData_Chunking(t *testing.T) {
 		t.Fatalf("decoded payload does not match original (len %d vs %d)", len(decodedClipboard.Data), len(payload))
 	}
 }
+
+func TestGetAvailableGrabTypes(t *testing.T) {
+	// Only text
+	types := getAvailableGrabTypes(vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, false, true)
+	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
+		t.Fatalf("expected [UTF8_TEXT], got %v", types)
+	}
+
+	// Only image
+	types = getAvailableGrabTypes(vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, true, false)
+	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
+		t.Fatalf("expected [IMAGE_PNG], got %v", types)
+	}
+
+	// Both image and text
+	types = getAvailableGrabTypes(vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, true, true)
+	if len(types) != 2 || types[0] != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG || types[1] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
+		t.Fatalf("expected [IMAGE_PNG, UTF8_TEXT], got %v", types)
+	}
+
+	// Fallback when neither detected
+	types = getAvailableGrabTypes(vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, false, false)
+	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
+		t.Fatalf("expected [UTF8_TEXT], got %v", types)
+	}
+}

@@ -473,6 +473,20 @@ func (agent *VDAgent) Close() error {
 	return agent.serialPort.Close()
 }
 
+func getAvailableGrabTypes(primaryType uint32, hasImage bool, hasText bool) []uint32 {
+	var types []uint32
+	if hasImage {
+		types = append(types, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG)
+	}
+	if hasText {
+		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+	}
+	if len(types) == 0 {
+		types = append(types, primaryType)
+	}
+	return types
+}
+
 func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType uint32) error {
 	agent.clipMu.Lock()
 	if bytes.Equal(agent.lastClipboardState, newClipboardState) && agent.lastClipboardType == clipType {
@@ -483,16 +497,20 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	agent.lastClipboardType = clipType
 	agent.clipMu.Unlock()
 
+	hasImage := clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG || len(clipboard.Read(clipboard.FmtImage)) > 0
+	hasText := clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT || len(clipboard.Read(clipboard.FmtText)) > 0
+	types := getAvailableGrabTypes(clipType, hasImage, hasText)
+
 	ourGrab := vd.VDAgentClipboardGrab{
 		Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
-		Types:     []uint32{clipType},
+		Types:     types,
 	}
 	ourGrabBytes, err := ourGrab.Encode()
 	if err != nil {
 		return err
 	}
 
-	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (type=%d)", clipType)
+	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (types=%v)", types)
 	return agent.writeMessage(vd.VD_AGENT_CLIPBOARD_GRAB, ourGrabBytes)
 }
 
