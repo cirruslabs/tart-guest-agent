@@ -71,15 +71,21 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Clean up any existing active task with duplicate ID before space check and path selection
+	if existingTask, exists := m.tasks[msg.ID]; exists {
+		_ = existingTask.file.Close()
+		_ = os.Remove(existingTask.targetPath)
+		delete(m.tasks, msg.ID)
+		zap.S().Warnf("filexfer: task id=%d already exists; cleaned up previous transfer", msg.ID)
+	}
+
 	// Bound the number of active transfers to prevent resource/FD exhaustion
 	if len(m.tasks) >= MaxActiveTransfers {
-		if _, exists := m.tasks[msg.ID]; !exists {
-			zap.S().Warnf("filexfer: active transfer limit (%d) reached, rejecting task id=%d", MaxActiveTransfers, msg.ID)
-			return &vd.VDAgentFileXferStatus{
-				ID:     msg.ID,
-				Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
-			}, fmt.Errorf("active transfer limit (%d) reached", MaxActiveTransfers)
-		}
+		zap.S().Warnf("filexfer: active transfer limit (%d) reached, rejecting task id=%d", MaxActiveTransfers, msg.ID)
+		return &vd.VDAgentFileXferStatus{
+			ID:     msg.ID,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, fmt.Errorf("active transfer limit (%d) reached", MaxActiveTransfers)
 	}
 
 	fileName, fileSize, err := parseMetadata(msg.Data)
@@ -94,12 +100,9 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 		fileName = fmt.Sprintf("tart_transfer_%d.dat", msg.ID)
 	}
 
-	// Calculate reserved space for currently active transfers (excluding any task replaced by msg.ID)
+	// Calculate reserved space for currently active transfers
 	var reservedSpace uint64
-	for id, t := range m.tasks {
-		if id == msg.ID {
-			continue
-		}
+	for _, t := range m.tasks {
 		if t.totalSize > t.bytesRcvd {
 			reservedSpace += (t.totalSize - t.bytesRcvd)
 		}
@@ -150,14 +153,6 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 			ID:     msg.ID,
 			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
 		}, err
-	}
-
-	// Clean up any existing active task with duplicate ID
-	if existingTask, exists := m.tasks[msg.ID]; exists {
-		_ = existingTask.file.Close()
-		_ = os.Remove(existingTask.targetPath)
-		delete(m.tasks, msg.ID)
-		zap.S().Warnf("filexfer: task id=%d already exists; cleaned up previous transfer", msg.ID)
 	}
 
 	task := &transferTask{

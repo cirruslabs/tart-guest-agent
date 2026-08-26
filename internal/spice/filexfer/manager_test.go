@@ -100,24 +100,24 @@ func TestFileXferManager_DuplicateTaskID(t *testing.T) {
 	mgr.SetDownloadDir(tempDir)
 	defer mgr.Close()
 
-	// First transfer with ID 55
+	// First transfer with ID 55 and filename retry.txt
 	_, err = mgr.HandleStart(&vd.VDAgentFileXferStart{
 		ID:   55,
-		Data: []byte("name=first.txt\nsize=10\n"),
+		Data: []byte("name=retry.txt\nsize=10\n"),
 	})
 	require.NoError(t, err)
-	firstPath := filepath.Join(tempDir, "first.txt")
-	assert.FileExists(t, firstPath)
+	targetPath := filepath.Join(tempDir, "retry.txt")
+	assert.FileExists(t, targetPath)
 
-	// Second transfer with same ID 55 should clean up previous
+	// Second transfer retry with same ID 55 and same filename retry.txt
+	// Should clean up previous partial and reuse retry.txt (not retry (1).txt)
 	_, err = mgr.HandleStart(&vd.VDAgentFileXferStart{
 		ID:   55,
-		Data: []byte("name=second.txt\nsize=20\n"),
+		Data: []byte("name=retry.txt\nsize=20\n"),
 	})
 	require.NoError(t, err)
-	assert.NoFileExists(t, firstPath)
-	secondPath := filepath.Join(tempDir, "second.txt")
-	assert.FileExists(t, secondPath)
+	assert.FileExists(t, targetPath)
+	assert.NoFileExists(t, filepath.Join(tempDir, "retry (1).txt"))
 }
 
 func TestFileXferManager_SizeMismatch(t *testing.T) {
