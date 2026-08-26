@@ -163,8 +163,7 @@ func runVdagentOnce(ctx context.Context) error {
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
-
-		return nil
+		return err
 	}
 	defer vdAgent.Close()
 
@@ -172,8 +171,7 @@ func runVdagentOnce(ctx context.Context) error {
 
 	if err := vdAgent.Run(ctx); err != nil {
 		zap.S().Errorf("failed to run vdagent: %v", err)
-
-		return nil
+		return err
 	}
 
 	return nil
