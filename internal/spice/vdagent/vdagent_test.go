@@ -70,6 +70,12 @@ func TestSelectGrabRequestType(t *testing.T) {
 			expectedOK:   true,
 		},
 		{
+			name:         "PNG prioritized over uncompressed TIFF/BMP when TIFF is first",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG},
+			expectedType: vd.VD_AGENT_CLIPBOARD_IMAGE_PNG,
+			expectedOK:   true,
+		},
+		{
 			name:         "all unknown types return false",
 			types:        []uint32{888, 777},
 			expectedType: 0,
