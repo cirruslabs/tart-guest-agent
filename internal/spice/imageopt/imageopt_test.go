@@ -73,3 +73,18 @@ func TestOptimizeImage_ExcessiveDimensions(t *testing.T) {
 	require.Nil(t, result)
 	require.ErrorIs(t, err, ErrInvalidDimensions)
 }
+
+func TestLimitedBuffer(t *testing.T) {
+	var lb limitedBuffer
+	lb.limit = 100
+
+	n, err := lb.Write(make([]byte, 60))
+	require.NoError(t, err)
+	require.Equal(t, 60, n)
+
+	// Attempting to write 50 bytes (total 110 > 100 limit) should fail and abort
+	_, err = lb.Write(make([]byte, 50))
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTranscodedTooLarge)
+	require.Equal(t, 60, lb.buf.Len())
+}

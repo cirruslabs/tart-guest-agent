@@ -24,10 +24,23 @@ const (
 )
 
 var (
-	ErrEmptyData         = errors.New("empty image data")
-	ErrOversizedPayload  = errors.New("image payload exceeds maximum recommended size")
-	ErrInvalidDimensions = errors.New("image dimensions exceed safety limits")
+	ErrEmptyData          = errors.New("empty image data")
+	ErrOversizedPayload   = errors.New("image payload exceeds maximum recommended size")
+	ErrInvalidDimensions  = errors.New("image dimensions exceed safety limits")
+	ErrTranscodedTooLarge = errors.New("transcoded PNG output exceeds maximum recommended size")
 )
+
+type limitedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (lb *limitedBuffer) Write(p []byte) (n int, err error) {
+	if lb.buf.Len()+len(p) > lb.limit {
+		return 0, ErrTranscodedTooLarge
+	}
+	return lb.buf.Write(p)
+}
 
 // OptimizeImage inspects image dimensions and safely transcodes incoming image formats
 // (TIFF, BMP, PNG, JPEG, GIF) into verified PNG bytes. Returns an error if the image
@@ -54,11 +67,15 @@ func OptimizeImage(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to decode image raster: %w", err)
 	}
 
-	var buf bytes.Buffer
+	var lb limitedBuffer
+	lb.limit = MaxRecommendedSize
 	encoder := png.Encoder{CompressionLevel: png.DefaultCompression}
-	if err := encoder.Encode(&buf, img); err != nil {
+	if err := encoder.Encode(&lb, img); err != nil {
+		if errors.Is(err, ErrTranscodedTooLarge) {
+			return nil, fmt.Errorf("%w: transcoded size exceeds %d bytes", ErrOversizedPayload, MaxRecommendedSize)
+		}
 		return nil, fmt.Errorf("failed to encode PNG: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	return lb.buf.Bytes(), nil
 }
