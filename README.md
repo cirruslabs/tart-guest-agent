@@ -6,10 +6,10 @@ Currently implemented features:
 
 * Automatic disk resizing for macOS VMs with recovery partition removed (`--resize-disk`)
     * needs to be invoked as a launchd [global daemon](https://launchd.info/)
-* Multi-format clipboard sharing for macOS and Linux (Wayland/X11) VMs using SPICE vdagent implementation (`--run-vdagent`)
+* Multi-format clipboard sharing for macOS and Linux (X11 / XWayland) VMs using SPICE vdagent implementation (`--run-vdagent`)
     * supports UTF-8 text and images (PNG, TIFF, JPG, BMP) with automatic PNG compression and transcoding
     * on macOS: invoke as a launchd global agent
-    * on Linux: invoke as a systemd user service with `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` (ensure user has read/write permission to `/dev/virtio-ports/com.redhat.spice.0` or `/dev/vport*` via device group membership, e.g. `dialout`, or a udev rule `SUBSYSTEM=="virtio-ports", KERNEL=="vport*", MODE="0666"`)
+    * on Linux: invoke as a systemd user service with `DISPLAY` (along with `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` if running Wayland with an XWayland bridge, required by `golang.design/x/clipboard`). Ensure user has read/write permission to `/dev/virtio-ports/com.redhat.spice.0` or `/dev/vport*` via device group membership (e.g. `dialout`) or a udev rule (`SUBSYSTEM=="virtio-ports", KERNEL=="vport*", MODE="0666"`)
 * SPICE File Transfer Daemon (`VD_AGENT_FILE_XFER_*`)
     * automatically receives files transferred over SPICE into `~/Downloads` with collision deduplication and path traversal sanitization
 * `tart exec` support (`--run-rpc`)
