@@ -21,7 +21,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func findSerialPortPath() string {
+// FindSerialPortPath locates the appropriate SPICE virtio-serial character device for the current OS.
+func FindSerialPortPath() string {
 	if runtime.GOOS == "linux" {
 		candidates := []string{
 			"/dev/virtio-ports/com.redhat.spice.0",
@@ -70,7 +71,7 @@ type VDAgent struct {
 }
 
 func New() (*VDAgent, error) {
-	portPath := findSerialPortPath()
+	portPath := FindSerialPortPath()
 	sp, err := os.OpenFile(portPath, os.O_RDWR, 0)
 	if err != nil {
 		return nil, err

@@ -17,6 +17,8 @@ Currently implemented features:
     * however, you can also invoke it as a launchd [global daemon](https://launchd.info/) or systemd system service if running commands started via `tart exec` as `root` is desired
 * `tart ip --resolver=agent` support (`--run-rpc`)
     * allows resolving VM's IP address without relying on DHCP leases and/or an ARP table
+* Environment and capability diagnostics (`tart-guest-agent doctor` or `--doctor`)
+    * checks SPICE serial port accessibility, Wayland/XWayland display sessions, clipboard backends, system CLI tools, and file transfer download targets with actionable remediation hints
 
 To run all features appropriate for a given context, use component groups:
 

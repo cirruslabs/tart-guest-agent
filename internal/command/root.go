@@ -10,6 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v5"
 	"github.com/cirruslabs/tart-guest-agent/internal/diskresizer"
+	"github.com/cirruslabs/tart-guest-agent/internal/doctor"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdagent"
@@ -28,6 +29,7 @@ var runRPC bool
 
 var runDaemon bool
 var runAgent bool
+var runDoctor bool
 
 var debug bool
 
@@ -50,11 +52,21 @@ func NewRootCommand() *cobra.Command {
 		RunE: run,
 	}
 
+	// Doctor subcommand
+	cmd.AddCommand(&cobra.Command{
+		Use:   "doctor",
+		Short: "Run guest agent environment and capability diagnostics",
+		Run: func(_ *cobra.Command, _ []string) {
+			os.Exit(doctor.PrintDoctorReport())
+		},
+	})
+
 	// Individual components
 	cmd.Flags().BoolVar(&resizeDisk, "resize-disk", false, "resize disk")
 	cmd.Flags().BoolVar(&runVdagent, "run-vdagent", false, "run vdagent")
 	cmd.Flags().BoolVar(&runRPC, "run-rpc", false, "run RPC service (currently required "+
 		"to support \"tart exec\" functionality)")
+	cmd.Flags().BoolVar(&runDoctor, "doctor", false, "run guest agent environment and capability diagnostics")
 
 	// Component groups
 	cmd.Flags().BoolVar(&runDaemon, "run-daemon", false, "identical to running the agent"+
@@ -68,6 +80,9 @@ func NewRootCommand() *cobra.Command {
 }
 
 func run(cmd *cobra.Command, args []string) error {
+	if runDoctor {
+		os.Exit(doctor.PrintDoctorReport())
+	}
 	// Component groups automatically enable certain individual components
 	if runDaemon {
 		resizeDisk = true
@@ -160,9 +175,20 @@ func run(cmd *cobra.Command, args []string) error {
 func runVdagentOnce(ctx context.Context) error {
 	zap.S().Infof("initializing vdagent...")
 
+	report := doctor.RunDiagnostics()
+	zap.S().Debugf("vdagent pre-flight capabilities: serial=%v display=%v text_clip=%v img_clip=%v file_xfer=%v",
+		report.Capabilities.SerialPort, report.Capabilities.DisplaySession,
+		report.Capabilities.TextClipboard, report.Capabilities.ImageClipboard,
+		report.Capabilities.FileTransfer)
+
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
+		for _, check := range report.Checks {
+			if check.Status == doctor.StatusError && check.Remediation != "" {
+				zap.S().Warnf("pre-flight hint for %s: %s", check.Name, check.Remediation)
+			}
+		}
 		return err
 	}
 	defer vdAgent.Close()

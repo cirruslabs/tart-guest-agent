@@ -12,7 +12,7 @@ import (
 )
 
 func TestFindSerialPortPath(t *testing.T) {
-	path := findSerialPortPath()
+	path := FindSerialPortPath()
 	if path == "" {
 		t.Fatalf("expected non-empty serial port path")
 	}
