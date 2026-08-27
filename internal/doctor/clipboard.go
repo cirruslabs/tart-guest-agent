@@ -11,7 +11,8 @@ import (
 )
 
 // CheckClipboard evaluates clipboard subsystem readiness, CLI utilities, and supported formats.
-func CheckClipboard() CheckResult {
+// When enableWriteProbe is false, it only passively inspects and preserves the user's existing clipboard.
+func CheckClipboard(enableWriteProbe bool) CheckResult {
 	res := CheckResult{
 		Category: "Clipboard",
 		Name:     "Clipboard Subsystem",
@@ -58,8 +59,10 @@ func CheckClipboard() CheckResult {
 	details = append(details, "Backend: golang.design/x/clipboard (initialized)")
 	details = append(details, "Formats Supported: UTF-8 Text, PNG/BMP/TIFF/JPG Images (with auto-optimization)")
 
-	// Non-destructive live clipboard loopback self-test
+	// Passive inspection of current clipboard content (preserves user state)
 	origText := clipboard.Read(clipboard.FmtText)
+	origImg := clipboard.Read(clipboard.FmtImage)
+
 	if len(origText) > 0 {
 		preview := string(origText)
 		preview = strings.ReplaceAll(preview, "\n", " ")
@@ -67,28 +70,41 @@ func CheckClipboard() CheckResult {
 		if len(preview) > 40 {
 			preview = preview[:40] + "..."
 		}
-		details = append(details, fmt.Sprintf("Clipboard Preview: '%s'", preview))
+		details = append(details, fmt.Sprintf("Clipboard Preview (Text): '%s'", preview))
+	}
+	if len(origImg) > 0 {
+		details = append(details, fmt.Sprintf("Clipboard Preview (Image): %d bytes present", len(origImg)))
 	}
 
-	testProbe := fmt.Sprintf("tart_selftest_%d", time.Now().UnixNano())
-	clipboard.Write(clipboard.FmtText, []byte(testProbe))
-	readBack := string(clipboard.Read(clipboard.FmtText))
+	if enableWriteProbe {
+		testProbe := fmt.Sprintf("tart_selftest_%d", time.Now().UnixNano())
+		clipboard.Write(clipboard.FmtText, []byte(testProbe))
+		readBack := string(clipboard.Read(clipboard.FmtText))
 
-	// Restore original clipboard
-	if len(origText) > 0 {
-		clipboard.Write(clipboard.FmtText, origText)
-	}
+		// Fully restore original multi-format clipboard
+		if len(origImg) > 0 {
+			clipboard.Write(clipboard.FmtImage, origImg)
+		} else if len(origText) > 0 {
+			clipboard.Write(clipboard.FmtText, origText)
+		} else {
+			clipboard.Write(clipboard.FmtText, []byte{})
+		}
 
-	if readBack == testProbe {
-		details = append(details, "Live Self-Test: PASS (read/write loopback verified)")
+		if readBack == testProbe {
+			res.Status = StatusOK
+			res.Summary = "Text and Image clipboard active (self-test passed)"
+			details = append(details, "Live Self-Test: PASS (read/write loopback verified)")
+		} else {
+			res.Status = StatusWarn
+			res.Summary = "Clipboard write loopback unverified"
+			details = append(details, fmt.Sprintf("Live Self-Test: WARNING (expected '%s', got '%s')", testProbe, readBack))
+			res.Remediation = "Verify that XWayland / DISPLAY=:0 is receiving clipboard focus events."
+		}
 	} else {
-		res.Status = StatusWarn
-		details = append(details, fmt.Sprintf("Live Self-Test: WARNING (expected '%s', got '%s')", testProbe, readBack))
-		res.Remediation = "Verify that XWayland / DISPLAY=:0 is receiving clipboard focus events."
+		res.Status = StatusOK
+		res.Summary = "Text and Image clipboard active"
 	}
 
-	res.Status = StatusOK
-	res.Summary = "Text and Image clipboard active (self-test passed)"
 	res.Details = strings.Join(details, "\n")
 	return res
 }

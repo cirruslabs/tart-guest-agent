@@ -53,13 +53,16 @@ func NewRootCommand() *cobra.Command {
 	}
 
 	// Doctor subcommand
-	cmd.AddCommand(&cobra.Command{
+	var enableSelfTest bool
+	doctorCmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run guest agent environment and capability diagnostics",
 		Run: func(_ *cobra.Command, _ []string) {
-			os.Exit(doctor.PrintDoctorReport())
+			os.Exit(doctor.PrintDoctorReport(enableSelfTest))
 		},
-	})
+	}
+	doctorCmd.Flags().BoolVarP(&enableSelfTest, "self-test", "s", false, "run active read/write clipboard loopback self-test")
+	cmd.AddCommand(doctorCmd)
 
 	// Individual components
 	cmd.Flags().BoolVar(&resizeDisk, "resize-disk", false, "resize disk")
@@ -81,7 +84,7 @@ func NewRootCommand() *cobra.Command {
 
 func run(cmd *cobra.Command, args []string) error {
 	if runDoctor {
-		os.Exit(doctor.PrintDoctorReport())
+		os.Exit(doctor.PrintDoctorReport(false))
 	}
 	// Component groups automatically enable certain individual components
 	if runDaemon {

@@ -29,6 +29,24 @@ func TestRunDiagnostics(t *testing.T) {
 	assert.Contains(t, output, "File Transfer")
 }
 
+func TestRunDiagnosticsWithSelfTest(t *testing.T) {
+	report := doctor.RunDiagnosticsWithSelfTest(true)
+	require.NotNil(t, report)
+	assert.NotEmpty(t, report.Checks)
+}
+
+func TestCheckClipboard(t *testing.T) {
+	// Passive check does not mutate or write probe
+	resPassive := doctor.CheckClipboard(false)
+	assert.Equal(t, "Clipboard", resPassive.Category)
+	assert.NotEmpty(t, resPassive.Summary)
+
+	// Active self-test performs loopback
+	resActive := doctor.CheckClipboard(true)
+	assert.Equal(t, "Clipboard", resActive.Category)
+	assert.NotEmpty(t, resActive.Summary)
+}
+
 func TestCheckDisplaySession(t *testing.T) {
 	res := doctor.CheckDisplaySession()
 	assert.Equal(t, "Display", res.Category)

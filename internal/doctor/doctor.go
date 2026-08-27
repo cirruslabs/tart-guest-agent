@@ -57,8 +57,13 @@ type Report struct {
 	Overall      Status
 }
 
-// RunDiagnostics executes all diagnostic probes and compiles a Report.
+// RunDiagnostics executes passive diagnostic probes without mutating user state.
 func RunDiagnostics() *Report {
+	return RunDiagnosticsWithSelfTest(false)
+}
+
+// RunDiagnosticsWithSelfTest executes diagnostic probes with optional active write loopback self-testing.
+func RunDiagnosticsWithSelfTest(enableSelfTest bool) *Report {
 	report := &Report{
 		OS:      runtime.GOOS,
 		Arch:    runtime.GOARCH,
@@ -96,8 +101,8 @@ func RunDiagnostics() *Report {
 		report.Overall = StatusWarn
 	}
 
-	// 4. Clipboard Backend & Tools Check
-	clipCheck := CheckClipboard()
+	// 4. Clipboard Backend & Tools Check (passive unless enableSelfTest is requested)
+	clipCheck := CheckClipboard(enableSelfTest)
 	report.Checks = append(report.Checks, clipCheck)
 	if clipCheck.Status == StatusOK {
 		report.Capabilities.TextClipboard = true
@@ -169,9 +174,9 @@ func (r *Report) PrintReport(w io.Writer) {
 	}
 }
 
-// NewDoctorCommand creates the cobra command for `tart-guest-agent doctor`.
-func PrintDoctorReport() int {
-	report := RunDiagnostics()
+// PrintDoctorReport executes diagnostics and prints to stdout, returning an exit code.
+func PrintDoctorReport(enableSelfTest bool) int {
+	report := RunDiagnosticsWithSelfTest(enableSelfTest)
 	report.PrintReport(os.Stdout)
 	if report.Overall == StatusError {
 		return 1
