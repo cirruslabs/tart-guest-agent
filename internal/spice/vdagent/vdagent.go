@@ -474,6 +474,20 @@ func (agent *VDAgent) Close() error {
 	return agent.serialPort.Close()
 }
 
+func (agent *VDAgent) isServableImage(newClipboardState []byte, clipType uint32) bool {
+	var rawImg []byte
+	if clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
+		rawImg = newClipboardState
+	} else {
+		rawImg = clipboard.Read(clipboard.FmtImage)
+	}
+	if len(rawImg) == 0 {
+		return false
+	}
+	_, err := imageopt.OptimizeImage(rawImg)
+	return err == nil
+}
+
 func getAvailableGrabTypes(primaryType uint32, hasImage bool, hasText bool) []uint32 {
 	var types []uint32
 	if hasImage {
@@ -482,7 +496,7 @@ func getAvailableGrabTypes(primaryType uint32, hasImage bool, hasText bool) []ui
 	if hasText {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
 	}
-	if len(types) == 0 {
+	if len(types) == 0 && primaryType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 		types = append(types, primaryType)
 	}
 	return types
@@ -498,9 +512,14 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	agent.lastClipboardType = clipType
 	agent.clipMu.Unlock()
 
-	hasImage := clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG || len(clipboard.Read(clipboard.FmtImage)) > 0
-	hasText := clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT || len(clipboard.Read(clipboard.FmtText)) > 0
+	hasImage := agent.isServableImage(newClipboardState, clipType)
+	hasText := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0) || len(clipboard.Read(clipboard.FmtText)) > 0
 	types := getAvailableGrabTypes(clipType, hasImage, hasText)
+
+	if len(types) == 0 {
+		zap.S().Debugf("no servable clipboard formats available, skipping grab")
+		return nil
+	}
 
 	ourGrab := vd.VDAgentClipboardGrab{
 		Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,

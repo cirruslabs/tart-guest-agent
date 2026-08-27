@@ -168,9 +168,15 @@ func TestGetAvailableGrabTypes(t *testing.T) {
 		t.Fatalf("expected [IMAGE_PNG, UTF8_TEXT], got %v", types)
 	}
 
-	// Fallback when neither detected
+	// Text fallback when neither detected
 	types = getAvailableGrabTypes(vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, false, false)
 	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 		t.Fatalf("expected [UTF8_TEXT], got %v", types)
+	}
+
+	// Unservable image without text returns empty types to avoid invalid grab
+	types = getAvailableGrabTypes(vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, false, false)
+	if len(types) != 0 {
+		t.Fatalf("expected empty types for unservable image without text, got %v", types)
 	}
 }
