@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"syscall"
@@ -54,14 +55,16 @@ func NewRootCommand() *cobra.Command {
 
 	// Doctor subcommand
 	var enableSelfTest bool
+	var enableNotify bool
 	doctorCmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run guest agent environment and capability diagnostics",
 		Run: func(_ *cobra.Command, _ []string) {
-			os.Exit(doctor.PrintDoctorReport(enableSelfTest))
+			os.Exit(doctor.PrintDoctorReport(enableSelfTest, enableNotify))
 		},
 	}
 	doctorCmd.Flags().BoolVarP(&enableSelfTest, "self-test", "s", false, "run active read/write clipboard loopback self-test")
+	doctorCmd.Flags().BoolVarP(&enableNotify, "notify", "n", false, "send desktop notification with diagnostic results")
 	cmd.AddCommand(doctorCmd)
 
 	// Individual components
@@ -84,7 +87,7 @@ func NewRootCommand() *cobra.Command {
 
 func run(cmd *cobra.Command, args []string) error {
 	if runDoctor {
-		os.Exit(doctor.PrintDoctorReport(false))
+		os.Exit(doctor.PrintDoctorReport(false, false))
 	}
 	// Component groups automatically enable certain individual components
 	if runDaemon {
@@ -94,6 +97,10 @@ func run(cmd *cobra.Command, args []string) error {
 	if runAgent {
 		runVdagent = true
 		runRPC = true
+	}
+
+	if !resizeDisk && !runVdagent && !runRPC {
+		return fmt.Errorf("at least one component must be enabled")
 	}
 
 	// Terminate to prevent disk corruption on macOS guests
@@ -112,7 +119,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Perform disk resizing
 	if resizeDisk {
-		zap.S().Info("attempting to resize disk...")
+		zap.S().Infof("resizing the disk...")
 
 		if err := diskresizer.Resize(); err != nil {
 			if errors.Is(err, diskresizer.ErrUnsupported) || errors.Is(err, diskresizer.ErrAlreadyResized) {
@@ -183,6 +190,10 @@ func runVdagentOnce(ctx context.Context) error {
 		report.Capabilities.SerialPort, report.Capabilities.DisplaySession,
 		report.Capabilities.TextClipboard, report.Capabilities.ImageClipboard,
 		report.Capabilities.FileTransfer)
+
+	if report.Overall != doctor.StatusOK {
+		_ = report.NotifyReport()
+	}
 
 	vdAgent, err := vdagent.New()
 	if err != nil {

@@ -74,3 +74,10 @@ func TestCheckFileTransfer(t *testing.T) {
 	assert.Equal(t, doctor.StatusOK, res.Status)
 	assert.Contains(t, res.Summary, "Downloads")
 }
+
+func TestNotifyReport(t *testing.T) {
+	report := doctor.RunDiagnostics()
+	require.NotNil(t, report)
+	// NotifyReport handles environments without display servers or notify tools gracefully
+	_ = report.NotifyReport()
+}

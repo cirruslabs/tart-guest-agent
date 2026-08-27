@@ -174,10 +174,13 @@ func (r *Report) PrintReport(w io.Writer) {
 	}
 }
 
-// PrintDoctorReport executes diagnostics and prints to stdout, returning an exit code.
-func PrintDoctorReport(enableSelfTest bool) int {
+// PrintDoctorReport executes diagnostics, prints to stdout, optionally sends desktop notification, and returns an exit code.
+func PrintDoctorReport(enableSelfTest bool, enableNotify bool) int {
 	report := RunDiagnosticsWithSelfTest(enableSelfTest)
 	report.PrintReport(os.Stdout)
+	if enableNotify {
+		_ = report.NotifyReport()
+	}
 	if report.Overall == StatusError {
 		return 1
 	}
