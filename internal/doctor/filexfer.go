@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
+
+	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 )
 
 // CheckFileTransfer verifies download directory writability and available disk space.
@@ -27,25 +28,26 @@ func CheckFileTransfer() CheckResult {
 		return res
 	}
 
-	// Test writability
-	probeFile := filepath.Join(downloadDir, ".tart_filexfer_probe")
-	if err := os.WriteFile(probeFile, []byte("ok"), 0644); err != nil {
+	// Test writability using unique temporary probe file
+	probeFile, err := os.CreateTemp(downloadDir, ".tart_filexfer_probe_*")
+	if err != nil {
 		res.Status = StatusError
 		res.Summary = fmt.Sprintf("download directory %s is not writable: %v", downloadDir, err)
 		res.Remediation = fmt.Sprintf("Fix permissions on %s: 'chmod u+rwx %s'", downloadDir, downloadDir)
 		return res
 	}
-	_ = os.Remove(probeFile)
+	probePath := probeFile.Name()
+	_ = probeFile.Close()
+	_ = os.Remove(probePath)
 
-	// Measure disk space
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(downloadDir, &stat); err != nil {
+	// Measure disk space via cross-platform helper
+	freeBytes, err := filexfer.GetAvailableDiskSpace(downloadDir)
+	if err != nil {
 		res.Status = StatusWarn
 		res.Summary = fmt.Sprintf("download dir %s writable (unable to measure free disk space)", downloadDir)
 		return res
 	}
 
-	freeBytes := stat.Bavail * uint64(stat.Bsize)
 	freeGB := float64(freeBytes) / (1024 * 1024 * 1024)
 
 	res.Status = StatusOK

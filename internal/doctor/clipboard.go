@@ -81,12 +81,14 @@ func CheckClipboard(enableWriteProbe bool) CheckResult {
 		clipboard.Write(clipboard.FmtText, []byte(testProbe))
 		readBack := string(clipboard.Read(clipboard.FmtText))
 
-		// Fully restore original multi-format clipboard
+		// Fully restore all original multi-format clipboard representations
+		if len(origText) > 0 {
+			clipboard.Write(clipboard.FmtText, origText)
+		}
 		if len(origImg) > 0 {
 			clipboard.Write(clipboard.FmtImage, origImg)
-		} else if len(origText) > 0 {
-			clipboard.Write(clipboard.FmtText, origText)
-		} else {
+		}
+		if len(origText) == 0 && len(origImg) == 0 {
 			clipboard.Write(clipboard.FmtText, []byte{})
 		}
 
