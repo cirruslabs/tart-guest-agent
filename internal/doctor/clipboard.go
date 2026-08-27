@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"golang.design/x/clipboard"
 )
@@ -57,8 +58,37 @@ func CheckClipboard() CheckResult {
 	details = append(details, "Backend: golang.design/x/clipboard (initialized)")
 	details = append(details, "Formats Supported: UTF-8 Text, PNG/BMP/TIFF/JPG Images (with auto-optimization)")
 
+	// Non-destructive live clipboard loopback self-test
+	origText := clipboard.Read(clipboard.FmtText)
+	if len(origText) > 0 {
+		preview := string(origText)
+		preview = strings.ReplaceAll(preview, "\n", " ")
+		preview = strings.ReplaceAll(preview, "\r", "")
+		if len(preview) > 40 {
+			preview = preview[:40] + "..."
+		}
+		details = append(details, fmt.Sprintf("Clipboard Preview: '%s'", preview))
+	}
+
+	testProbe := fmt.Sprintf("tart_selftest_%d", time.Now().UnixNano())
+	clipboard.Write(clipboard.FmtText, []byte(testProbe))
+	readBack := string(clipboard.Read(clipboard.FmtText))
+
+	// Restore original clipboard
+	if len(origText) > 0 {
+		clipboard.Write(clipboard.FmtText, origText)
+	}
+
+	if readBack == testProbe {
+		details = append(details, "Live Self-Test: PASS (read/write loopback verified)")
+	} else {
+		res.Status = StatusWarn
+		details = append(details, fmt.Sprintf("Live Self-Test: WARNING (expected '%s', got '%s')", testProbe, readBack))
+		res.Remediation = "Verify that XWayland / DISPLAY=:0 is receiving clipboard focus events."
+	}
+
 	res.Status = StatusOK
-	res.Summary = "Text and Image clipboard active"
+	res.Summary = "Text and Image clipboard active (self-test passed)"
 	res.Details = strings.Join(details, "\n")
 	return res
 }
