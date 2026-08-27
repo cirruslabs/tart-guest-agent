@@ -78,3 +78,17 @@ func TestClipboardRequestEncoding(t *testing.T) {
 	assert.Equal(t, uint8(vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD), decoded.Selection)
 	assert.Equal(t, uint32(vd.VD_AGENT_CLIPBOARD_IMAGE_PNG), decoded.Type)
 }
+
+func TestClipboardReleaseEncoding(t *testing.T) {
+	rel := vd.VDAgentClipboardRelease{
+		Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
+	}
+
+	encoded, err := rel.Encode()
+	require.NoError(t, err)
+
+	decoded, err := vd.DecodeVDAgentClipboardRelease(bytes.NewReader(encoded))
+	require.NoError(t, err)
+	assert.Equal(t, uint8(vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD), decoded.Selection)
+	assert.Contains(t, rel.String(), "selection=0")
+}

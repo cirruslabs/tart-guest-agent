@@ -517,8 +517,16 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	types := getAvailableGrabTypes(clipType, hasImage, hasText)
 
 	if len(types) == 0 {
-		zap.S().Debugf("no servable clipboard formats available, skipping grab")
-		return nil
+		zap.S().Debugf("no servable clipboard formats available, releasing clipboard")
+		releaseMsg := vd.VDAgentClipboardRelease{
+			Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
+		}
+		releaseBytes, err := releaseMsg.Encode()
+		if err != nil {
+			return err
+		}
+		zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
+		return agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes)
 	}
 
 	ourGrab := vd.VDAgentClipboardGrab{
