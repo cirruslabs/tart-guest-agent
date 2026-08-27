@@ -192,15 +192,18 @@ func runVdagentOnce(ctx context.Context) error {
 				zap.S().Warnf("pre-flight hint for %s: %s", check.Name, check.Remediation)
 			}
 		}
-		return err
+		return nil
 	}
 	defer vdAgent.Close()
 
 	zap.S().Infof("running vdagent...")
 
 	if err := vdAgent.Run(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		zap.S().Errorf("failed to run vdagent: %v", err)
-		return err
+		return nil
 	}
 
 	return nil
