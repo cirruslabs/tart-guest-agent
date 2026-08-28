@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/imageopt"
@@ -171,11 +172,27 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 		g.Go(func() error {
 			textCh := clipboard.Watch(gCtx, clipboard.FmtText)
 			imageCh := clipboard.Watch(gCtx, clipboard.FmtImage)
+			pollTicker := time.NewTicker(500 * time.Millisecond)
+			defer pollTicker.Stop()
 
 			for {
 				select {
 				case <-gCtx.Done():
 					return gCtx.Err()
+				case <-pollTicker.C:
+					agent.clipMu.Lock()
+					hadContent := agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0
+					agent.clipMu.Unlock()
+					if hadContent {
+						if len(clipboard.Read(clipboard.FmtText)) == 0 && len(clipboard.Read(clipboard.FmtImage)) == 0 {
+							if err := agent.processClipboardState(nil, vd.VD_AGENT_CLIPBOARD_NONE); err != nil {
+								if gCtx.Err() != nil {
+									return gCtx.Err()
+								}
+								return fmt.Errorf("failed to process empty clipboard release: %w", err)
+							}
+						}
+					}
 				case textData, ok := <-textCh:
 					if !ok {
 						return nil
@@ -240,7 +257,15 @@ func selectGrabRequestType(types []uint32) (uint32, bool) {
 			return t, true
 		}
 	}
-	// 2. Fallback to UTF-8 text format
+	// 2. Fallback to other supported image formats (BMP, TIFF, JPG)
+	for _, t := range types {
+		if t == vd.VD_AGENT_CLIPBOARD_IMAGE_BMP ||
+			t == vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF ||
+			t == vd.VD_AGENT_CLIPBOARD_IMAGE_JPG {
+			return t, true
+		}
+	}
+	// 3. Fallback to UTF-8 text format
 	for _, t := range types {
 		if t == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 			return t, true

@@ -76,6 +76,24 @@ func TestSelectGrabRequestType(t *testing.T) {
 			expectedOK:   true,
 		},
 		{
+			name:         "single TIFF fallback when PNG not listed",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF},
+			expectedType: vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF,
+			expectedOK:   true,
+		},
+		{
+			name:         "single BMP fallback when PNG not listed",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_BMP},
+			expectedType: vd.VD_AGENT_CLIPBOARD_IMAGE_BMP,
+			expectedOK:   true,
+		},
+		{
+			name:         "TIFF image prioritized over UTF8_TEXT when PNG not listed",
+			types:        []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF},
+			expectedType: vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF,
+			expectedOK:   true,
+		},
+		{
 			name:         "all unknown types return false",
 			types:        []uint32{888, 777},
 			expectedType: 0,
