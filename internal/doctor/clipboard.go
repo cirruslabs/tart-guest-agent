@@ -95,7 +95,7 @@ func CheckClipboard(enableWriteProbe bool) CheckResult {
 			} else {
 				res.Status = StatusWarn
 				res.Summary = "Clipboard write loopback unverified"
-				details = append(details, fmt.Sprintf("Live Self-Test: WARNING (expected '%s', got '%s')", testProbe, readBack))
+				details = append(details, "Live Self-Test: WARNING (loopback verification mismatch)")
 				res.Remediation = "Verify that XWayland / DISPLAY=:0 is receiving clipboard focus events."
 			}
 		}

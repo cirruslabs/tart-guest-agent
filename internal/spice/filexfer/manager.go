@@ -31,7 +31,7 @@ type Manager struct {
 
 // NewManager initializes the file transfer manager with a target download directory.
 func NewManager() *Manager {
-	dir := defaultDownloadDir()
+	dir := DefaultDownloadDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		zap.S().Warnf("failed to create download dir %s: %v, falling back to temp dir", dir, err)
 		dir = filepath.Join(os.TempDir(), "tart-transfers")
@@ -44,11 +44,11 @@ func NewManager() *Manager {
 	}
 }
 
-func defaultDownloadDir() string {
+func DefaultDownloadDir() string {
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
 		downloads := filepath.Join(home, "Downloads")
-		if info, err := os.Stat(downloads); err == nil && info.IsDir() {
+		if err := os.MkdirAll(downloads, 0755); err == nil {
 			return downloads
 		}
 		return home

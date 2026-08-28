@@ -327,6 +327,14 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 		switch vdAgentClipboard.Type {
+		case vd.VD_AGENT_CLIPBOARD_NONE:
+			agent.clipMu.Lock()
+			agent.lastClipboardState = nil
+			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+			agent.clipMu.Unlock()
+
+			clipboard.Write(clipboard.FmtText, nil)
+			zap.S().Debugf("Cleared agent-owned clipboard on VD_AGENT_CLIPBOARD_NONE")
 		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
 			optimized, err := imageopt.OptimizeImage(vdAgentClipboard.Data)
 			if err != nil {
@@ -352,6 +360,34 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		default:
 			zap.S().Warnf("ignoring unsupported clipboard data type %d", vdAgentClipboard.Type)
 		}
+
+	case vd.VD_AGENT_CLIPBOARD_RELEASE:
+		if !agent.clipboardEnabled {
+			zap.S().Debugf("ignoring VD_AGENT_CLIPBOARD_RELEASE because clipboard is disabled")
+			return nil
+		}
+
+		vdAgentClipboardRelease, err := vd.DecodeVDAgentClipboardRelease(bytes.NewReader(vdiAgentMessage.Data))
+		if err != nil {
+			return err
+		}
+
+		zap.S().Debugf("I: VD_AGENT_CLIPBOARD_RELEASE (%d bytes, selection=%d)",
+			len(vdiAgentMessage.Data), vdAgentClipboardRelease.Selection)
+
+		if vdAgentClipboardRelease.Selection != vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD {
+			zap.S().Debugf("ignoring release for non-clipboard selection %d", vdAgentClipboardRelease.Selection)
+			return nil
+		}
+
+		agent.clipMu.Lock()
+		agent.lastClipboardState = nil
+		agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+		agent.clipMu.Unlock()
+
+		clipboard.Write(clipboard.FmtText, nil)
+		zap.S().Debugf("Cleared agent-owned clipboard on VD_AGENT_CLIPBOARD_RELEASE")
+		return nil
 
 	case vd.VD_AGENT_CLIPBOARD_REQUEST:
 		if !agent.clipboardEnabled {

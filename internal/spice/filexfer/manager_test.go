@@ -309,6 +309,20 @@ func TestFileXferManager_OversizedChunk(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(tempDir, "capped.bin"))
 }
 
+func TestDefaultDownloadDir(t *testing.T) {
+	tempHome, err := os.MkdirTemp("", "fake_home_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempHome)
+
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", oldHome)
+
+	dir := filexfer.DefaultDownloadDir()
+	assert.Equal(t, filepath.Join(tempHome, "Downloads"), dir)
+	assert.DirExists(t, dir)
+}
+
 
 
 

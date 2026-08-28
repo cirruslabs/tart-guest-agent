@@ -3,7 +3,6 @@ package doctor
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 )
@@ -15,16 +14,11 @@ func CheckFileTransfer() CheckResult {
 		Name:     "File Transfer (Drag & Drop)",
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "/tmp"
-	}
-
-	downloadDir := filepath.Join(homeDir, "Downloads")
+	downloadDir := filexfer.DefaultDownloadDir()
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
 		res.Status = StatusError
 		res.Summary = fmt.Sprintf("failed creating download dir %s: %v", downloadDir, err)
-		res.Remediation = fmt.Sprintf("Ensure user home directory '%s' is writable.", homeDir)
+		res.Remediation = fmt.Sprintf("Ensure download directory '%s' is writable.", downloadDir)
 		return res
 	}
 
