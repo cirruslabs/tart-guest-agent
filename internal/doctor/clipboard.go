@@ -64,16 +64,10 @@ func CheckClipboard(enableWriteProbe bool) CheckResult {
 	origImg := clipboard.Read(clipboard.FmtImage)
 
 	if len(origText) > 0 {
-		preview := string(origText)
-		preview = strings.ReplaceAll(preview, "\n", " ")
-		preview = strings.ReplaceAll(preview, "\r", "")
-		if len(preview) > 40 {
-			preview = preview[:40] + "..."
-		}
-		details = append(details, fmt.Sprintf("Clipboard Preview (Text): '%s'", preview))
+		details = append(details, fmt.Sprintf("Current Content: %d bytes (text data present)", len(origText)))
 	}
 	if len(origImg) > 0 {
-		details = append(details, fmt.Sprintf("Clipboard Preview (Image): %d bytes present", len(origImg)))
+		details = append(details, fmt.Sprintf("Current Content: %d bytes (image data present)", len(origImg)))
 	}
 
 	if enableWriteProbe {
