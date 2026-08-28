@@ -24,31 +24,29 @@ func New(inner io.ReadWriter) *VDI {
 }
 
 func (vdi *VDI) Read(buf []byte) (int, error) {
-	// Read payload
-readPayload:
-	if vdi.remaining > 0 {
-		toRead := min(len(buf), int(vdi.remaining))
+	if len(buf) == 0 {
+		return 0, nil
+	}
 
-		n, err := vdi.inner.Read(buf[:toRead])
-		if err != nil {
+	for {
+		if vdi.remaining > 0 {
+			toRead := min(len(buf), int(vdi.remaining))
+			n, err := vdi.inner.Read(buf[:toRead])
+			if err != nil {
+				return 0, err
+			}
+			vdi.remaining -= uint64(n)
+			return n, nil
+		}
+
+		// Read next chunk header
+		var vdiChunkHeader chunkHeader
+		if err := binary.Read(vdi.inner, binary.LittleEndian, &vdiChunkHeader); err != nil {
 			return 0, err
 		}
 
-		vdi.remaining -= uint64(n)
-
-		return n, nil
+		vdi.remaining = uint64(vdiChunkHeader.Size)
 	}
-
-	// Read header
-	var vdiChunkHeader chunkHeader
-
-	if err := binary.Read(vdi.inner, binary.LittleEndian, &vdiChunkHeader); err != nil {
-		return 0, err
-	}
-
-	vdi.remaining = uint64(vdiChunkHeader.Size)
-
-	goto readPayload
 }
 
 // MaxChunkSize defines the maximum payload per VDI chunk (VD_AGENT_MAX_DATA_SIZE)

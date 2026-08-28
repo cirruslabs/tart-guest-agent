@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	// MaxRecommendedSize is 20 MB (raw encoded byte limit).
-	MaxRecommendedSize = 20 * 1024 * 1024
+	// MaxRecommendedSize is 64 MB (raw encoded byte limit for high-DPI screenshots).
+	MaxRecommendedSize = 64 * 1024 * 1024
 	// MaxDimension is maximum width or height permitted (8192px).
 	MaxDimension = 8192
 	// MaxPixels is maximum total pixels permitted (8192 * 8192 = 67,108,864 pixels).
