@@ -199,6 +199,9 @@ func runVdagentOnce(ctx context.Context) error {
 			return ctx.Err()
 		}
 		zap.S().Errorf("failed to run vdagent: %v", err)
+		if !runDaemon && !runAgent {
+			return err
+		}
 		return nil
 	}
 
