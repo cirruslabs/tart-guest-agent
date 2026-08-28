@@ -185,24 +185,9 @@ func run(cmd *cobra.Command, args []string) error {
 func runVdagentOnce(ctx context.Context) error {
 	zap.S().Infof("initializing vdagent...")
 
-	report := doctor.RunDiagnostics()
-	zap.S().Debugf("vdagent pre-flight capabilities: serial=%v display=%v text_clip=%v img_clip=%v file_xfer=%v",
-		report.Capabilities.SerialPort, report.Capabilities.DisplaySession,
-		report.Capabilities.TextClipboard, report.Capabilities.ImageClipboard,
-		report.Capabilities.FileTransfer)
-
-	if report.Overall != doctor.StatusOK {
-		_ = report.NotifyReport()
-	}
-
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
-		for _, check := range report.Checks {
-			if check.Status == doctor.StatusError && check.Remediation != "" {
-				zap.S().Warnf("pre-flight hint for %s: %s", check.Name, check.Remediation)
-			}
-		}
 		return nil
 	}
 	defer vdAgent.Close()

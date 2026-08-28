@@ -77,16 +77,17 @@ func New() (*VDAgent, error) {
 		return nil, err
 	}
 
+	clipboardEnabled := true
 	if err := clipboard.Init(); err != nil {
-		_ = sp.Close()
-		return nil, fmt.Errorf("clipboard initialization failed: %w", err)
+		zap.S().Warnf("clipboard initialization failed (%v); clipboard sharing disabled, file transfer will remain active", err)
+		clipboardEnabled = false
 	}
 
 	return &VDAgent{
 		serialPort:       sp,
 		vdi:              vdi.New(sp),
 		fileXferMgr:      filexfer.NewManager(),
-		clipboardEnabled: true,
+		clipboardEnabled: clipboardEnabled,
 	}, nil
 }
 
