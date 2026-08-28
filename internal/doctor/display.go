@@ -84,9 +84,8 @@ func CheckDisplaySession() CheckResult {
 	}
 
 	if waylandOK && !x11OK {
-		res.Status = StatusWarn
-		res.Summary = fmt.Sprintf("Wayland (%s) active, but DISPLAY is not set", waylandDisplay)
-		res.Remediation = "Export 'DISPLAY=:0' or add 'Environment=DISPLAY=:0' to tart-vdagent.service (required for clipboard libX11 bridge)."
+		res.Status = StatusOK
+		res.Summary = fmt.Sprintf("Wayland session (%s) active", waylandDisplay)
 		return res
 	}
 
