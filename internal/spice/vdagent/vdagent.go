@@ -77,17 +77,16 @@ func New() (*VDAgent, error) {
 		return nil, err
 	}
 
-	clipboardEnabled := true
 	if err := clipboard.Init(); err != nil {
-		zap.S().Warnf("clipboard initialization failed (%v); clipboard sharing disabled, file transfer will remain active", err)
-		clipboardEnabled = false
+		_ = sp.Close()
+		return nil, fmt.Errorf("clipboard initialization failed: %w", err)
 	}
 
 	return &VDAgent{
 		serialPort:       sp,
 		vdi:              vdi.New(sp),
 		fileXferMgr:      filexfer.NewManager(),
-		clipboardEnabled: clipboardEnabled,
+		clipboardEnabled: true,
 	}, nil
 }
 
@@ -488,16 +487,13 @@ func (agent *VDAgent) isServableImage(newClipboardState []byte, clipType uint32)
 	return err == nil
 }
 
-func getAvailableGrabTypes(primaryType uint32, hasImage bool, hasText bool) []uint32 {
+func getAvailableGrabTypes(hasImage bool, hasText bool) []uint32 {
 	var types []uint32
 	if hasImage {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG)
 	}
 	if hasText {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
-	}
-	if len(types) == 0 && primaryType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
-		types = append(types, primaryType)
 	}
 	return types
 }
@@ -514,7 +510,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 
 	hasImage := agent.isServableImage(newClipboardState, clipType)
 	hasText := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0) || len(clipboard.Read(clipboard.FmtText)) > 0
-	types := getAvailableGrabTypes(clipType, hasImage, hasText)
+	types := getAvailableGrabTypes(hasImage, hasText)
 
 	if len(types) == 0 {
 		zap.S().Debugf("no servable clipboard formats available, releasing clipboard")
