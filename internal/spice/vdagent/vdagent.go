@@ -345,6 +345,12 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			optimized, err := imageopt.OptimizeImage(vdAgentClipboard.Data)
 			if err != nil {
 				zap.S().Warnf("ignoring invalid/unsafe incoming clipboard image (%d bytes): %v", len(vdAgentClipboard.Data), err)
+				agent.clipMu.Lock()
+				agent.lastClipboardState = nil
+				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+				agent.clipMu.Unlock()
+
+				clipboard.Write(clipboard.FmtText, nil)
 				return nil
 			}
 
