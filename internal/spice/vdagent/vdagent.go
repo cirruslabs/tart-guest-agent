@@ -240,15 +240,7 @@ func selectGrabRequestType(types []uint32) (uint32, bool) {
 			return t, true
 		}
 	}
-	// 2. Fallback to other supported image formats (BMP, TIFF, JPG)
-	for _, t := range types {
-		if t == vd.VD_AGENT_CLIPBOARD_IMAGE_BMP ||
-			t == vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF ||
-			t == vd.VD_AGENT_CLIPBOARD_IMAGE_JPG {
-			return t, true
-		}
-	}
-	// 3. Fallback to UTF-8 text format
+	// 2. Fallback to UTF-8 text format
 	for _, t := range types {
 		if t == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 			return t, true
