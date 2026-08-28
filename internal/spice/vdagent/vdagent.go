@@ -294,7 +294,13 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 
 		reqType, ok := selectGrabRequestType(vdAgentClipboardGrab.Types)
 		if !ok {
-			zap.S().Debugf("ignoring grab with unsupported format types: %v", vdAgentClipboardGrab.Types)
+			zap.S().Debugf("clearing stale clipboard on grab with unsupported format types: %v", vdAgentClipboardGrab.Types)
+			agent.clipMu.Lock()
+			agent.lastClipboardState = nil
+			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+			agent.clipMu.Unlock()
+
+			clipboard.Write(clipboard.FmtText, nil)
 			return nil
 		}
 
