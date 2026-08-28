@@ -19,6 +19,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -199,7 +201,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					return
 				}
 
-				if !errors.Is(err, context.Canceled) {
+				if !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
 					reportClientError(err)
 				}
 
