@@ -175,20 +175,23 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 	if agent.clipboardEnabled {
 		g.Go(func() error {
 			textCh := clipboard.Watch(gCtx, clipboard.FmtText)
-			imageCh := clipboard.Watch(gCtx, clipboard.FmtImage)
 			pollTicker := time.NewTicker(500 * time.Millisecond)
 			defer pollTicker.Stop()
+
+			var lastFormats []clipboard.Format
 
 			for {
 				select {
 				case <-gCtx.Done():
 					return gCtx.Err()
 				case <-pollTicker.C:
+					formats := clipboard.Formats()
 					agent.clipMu.Lock()
 					hadContent := agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0
 					agent.clipMu.Unlock()
-					if hadContent {
-						if !hasServableClipboardFormat(clipboard.Formats()) {
+
+					if !hasServableClipboardFormat(formats) {
+						if hadContent {
 							if err := agent.processClipboardState(nil, vd.VD_AGENT_CLIPBOARD_NONE); err != nil {
 								if gCtx.Err() != nil {
 									return gCtx.Err()
@@ -196,7 +199,23 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 								return fmt.Errorf("failed to process unsupported clipboard release: %w", err)
 							}
 						}
+						lastFormats = formats
+						continue
 					}
+
+					// If formats changed and an image format is now present, read image payload once
+					if slices.Contains(formats, clipboard.FmtImage) && !slices.Equal(lastFormats, formats) {
+						if imgData := clipboard.Read(clipboard.FmtImage); len(imgData) > 0 {
+							if err := agent.processClipboardState(imgData, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG); err != nil {
+								if gCtx.Err() != nil {
+									return gCtx.Err()
+								}
+								return fmt.Errorf("failed to process image clipboard state: %w", err)
+							}
+						}
+					}
+					lastFormats = formats
+
 				case textData, ok := <-textCh:
 					if !ok {
 						return nil
@@ -206,16 +225,6 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							return gCtx.Err()
 						}
 						return fmt.Errorf("failed to process text clipboard state: %w", err)
-					}
-				case imgData, ok := <-imageCh:
-					if !ok {
-						return nil
-					}
-					if err := agent.processClipboardState(imgData.Bytes, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG); err != nil {
-						if gCtx.Err() != nil {
-							return gCtx.Err()
-						}
-						return fmt.Errorf("failed to process image clipboard state: %w", err)
 					}
 				}
 			}
