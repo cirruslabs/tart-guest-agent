@@ -9,6 +9,7 @@ import (
 
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
+	"golang.design/x/clipboard"
 )
 
 func TestFindSerialPortPath(t *testing.T) {
@@ -190,5 +191,36 @@ func TestGetAvailableGrabTypes(t *testing.T) {
 	types = getAvailableGrabTypes(false, false)
 	if len(types) != 0 {
 		t.Fatalf("expected empty types when no formats available, got %v", types)
+	}
+}
+
+func TestHasServableClipboardFormat(t *testing.T) {
+	// Empty formats
+	if hasServableClipboardFormat(nil) {
+		t.Fatalf("expected nil formats to return false")
+	}
+	if hasServableClipboardFormat([]clipboard.Format{}) {
+		t.Fatalf("expected empty formats to return false")
+	}
+
+	// Text format present
+	if !hasServableClipboardFormat([]clipboard.Format{clipboard.FmtText}) {
+		t.Fatalf("expected FmtText to return true")
+	}
+
+	// Image format present
+	if !hasServableClipboardFormat([]clipboard.Format{clipboard.FmtImage}) {
+		t.Fatalf("expected FmtImage to return true")
+	}
+
+	// Unsupported custom / file format (e.g. format 3)
+	customFormat := clipboard.Format(99)
+	if hasServableClipboardFormat([]clipboard.Format{customFormat}) {
+		t.Fatalf("expected custom unsupported format to return false")
+	}
+
+	// Custom format alongside text
+	if !hasServableClipboardFormat([]clipboard.Format{customFormat, clipboard.FmtText}) {
+		t.Fatalf("expected custom format + FmtText to return true")
 	}
 }

@@ -184,12 +184,12 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 					hadContent := agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0
 					agent.clipMu.Unlock()
 					if hadContent {
-						if len(clipboard.Formats()) == 0 {
+						if !hasServableClipboardFormat(clipboard.Formats()) {
 							if err := agent.processClipboardState(nil, vd.VD_AGENT_CLIPBOARD_NONE); err != nil {
 								if gCtx.Err() != nil {
 									return gCtx.Err()
 								}
-								return fmt.Errorf("failed to process empty clipboard release: %w", err)
+								return fmt.Errorf("failed to process unsupported clipboard release: %w", err)
 							}
 						}
 					}
@@ -248,6 +248,15 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 	})
 
 	return g.Wait()
+}
+
+func hasServableClipboardFormat(formats []clipboard.Format) bool {
+	for _, f := range formats {
+		if f == clipboard.FmtText || f == clipboard.FmtImage {
+			return true
+		}
+	}
+	return false
 }
 
 func selectGrabRequestType(types []uint32) (uint32, bool) {
