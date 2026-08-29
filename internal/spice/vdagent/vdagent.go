@@ -68,6 +68,7 @@ type VDAgent struct {
 	lastClipboardState  []byte
 	lastClipboardType   uint32
 	lastAdvertisedTypes []uint32
+	lastHostGrabTypes   []uint32
 	clipMu              sync.Mutex
 	fileXferMgr         *filexfer.Manager
 	clipboardEnabled    bool
@@ -320,6 +321,10 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			return nil
 		}
 
+		agent.clipMu.Lock()
+		agent.lastHostGrabTypes = vdAgentClipboardGrab.Types
+		agent.clipMu.Unlock()
+
 		reqType, ok := selectGrabRequestType(vdAgentClipboardGrab.Types)
 		if !ok {
 			zap.S().Debugf("clearing stale clipboard on grab with unsupported format types: %v", vdAgentClipboardGrab.Types)
@@ -376,6 +381,23 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			if err != nil {
 				zap.S().Warnf("ignoring invalid/unsafe incoming clipboard image (%d bytes): %v", len(vdAgentClipboard.Data), err)
 				agent.clipMu.Lock()
+				hostGrabTypes := agent.lastHostGrabTypes
+				agent.clipMu.Unlock()
+
+				// If host grab also offered UTF8_TEXT, fall back to requesting text representation
+				if slices.Contains(hostGrabTypes, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
+					zap.S().Debugf("falling back to text request after rejected incoming image")
+					textReq := vd.VDAgentClipboardRequest{
+						Selection: vdAgentClipboard.Selection,
+						Type:      vd.VD_AGENT_CLIPBOARD_UTF8_TEXT,
+					}
+					textReqBytes, err := textReq.Encode()
+					if err == nil {
+						return agent.writeMessage(vd.VD_AGENT_CLIPBOARD_REQUEST, textReqBytes)
+					}
+				}
+
+				agent.clipMu.Lock()
 				agent.lastClipboardState = nil
 				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
 				agent.lastAdvertisedTypes = nil
@@ -385,26 +407,19 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 				return nil
 			}
 
-			types := getAvailableGrabTypes(true, len(clipboard.Read(clipboard.FmtText)) > 0)
 			agent.clipMu.Lock()
 			agent.lastClipboardState = optimized
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
-			agent.lastAdvertisedTypes = types
+			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG}
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtImage, optimized)
 			zap.S().Debugf("Wrote image clipboard data (%d bytes -> %d bytes)", len(vdAgentClipboard.Data), len(optimized))
 		case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
-			hasImg := false
-			if rawImg := clipboard.Read(clipboard.FmtImage); len(rawImg) > 0 {
-				_, err := imageopt.OptimizeImage(rawImg)
-				hasImg = err == nil
-			}
-			types := getAvailableGrabTypes(hasImg, len(vdAgentClipboard.Data) > 0)
 			agent.clipMu.Lock()
 			agent.lastClipboardState = vdAgentClipboard.Data
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
-			agent.lastAdvertisedTypes = types
+			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT}
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
