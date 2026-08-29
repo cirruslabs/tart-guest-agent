@@ -170,37 +170,25 @@ func TestSendClipboardData_Chunking(t *testing.T) {
 
 func TestGetAvailableGrabTypes(t *testing.T) {
 	// Only text
-	types := getAvailableGrabTypes([]clipboard.Format{clipboard.FmtText}, false)
+	types := getAvailableGrabTypes([]clipboard.Format{clipboard.FmtText})
 	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 		t.Fatalf("expected [UTF8_TEXT], got %v", types)
 	}
 
-	// Valid image
-	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage}, true)
+	// Only image
+	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage})
 	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
 		t.Fatalf("expected [IMAGE_PNG], got %v", types)
 	}
 
-	// Invalid/unservable image (should not advertise IMAGE_PNG)
-	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage}, false)
-	if len(types) != 0 {
-		t.Fatalf("expected empty types for unservable image, got %v", types)
-	}
-
-	// Both valid image and text
-	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage, clipboard.FmtText}, true)
+	// Both image and text
+	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage, clipboard.FmtText})
 	if len(types) != 2 || types[0] != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG || types[1] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 		t.Fatalf("expected [IMAGE_PNG, UTF8_TEXT], got %v", types)
 	}
 
-	// Unservable image with text fallback
-	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage, clipboard.FmtText}, false)
-	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
-		t.Fatalf("expected [UTF8_TEXT] when image is unservable, got %v", types)
-	}
-
 	// Neither image nor text available (e.g. cleared clipboard or unservable data)
-	types = getAvailableGrabTypes(nil, false)
+	types = getAvailableGrabTypes(nil)
 	if len(types) != 0 {
 		t.Fatalf("expected empty types when no formats available, got %v", types)
 	}
