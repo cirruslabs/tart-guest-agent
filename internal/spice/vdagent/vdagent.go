@@ -224,9 +224,14 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 					types := getAvailableGrabTypes(formats, lastImageValid)
 
 					agent.clipMu.Lock()
-					hadContent := (agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0
+					isHost := agent.isHostOwned
+					hadContent := !agent.isHostOwned && ((agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0)
 					sameTypes := slices.Equal(agent.lastAdvertisedTypes, types)
 					agent.clipMu.Unlock()
+
+					if isHost {
+						continue
+					}
 
 					if len(types) == 0 {
 						if hadContent {
