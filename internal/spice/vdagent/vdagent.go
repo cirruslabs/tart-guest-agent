@@ -69,6 +69,7 @@ type VDAgent struct {
 	lastClipboardType   uint32
 	lastAdvertisedTypes []uint32
 	lastHostGrabTypes   []uint32
+	isHostOwned         bool
 	clipMu              sync.Mutex
 	fileXferMgr         *filexfer.Manager
 	clipboardEnabled    bool
@@ -329,12 +330,18 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		if !ok {
 			zap.S().Debugf("clearing stale clipboard on grab with unsupported format types: %v", vdAgentClipboardGrab.Types)
 			agent.clipMu.Lock()
-			agent.lastClipboardState = nil
-			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
-			agent.lastAdvertisedTypes = nil
+			wasHostOwned := agent.isHostOwned
+			agent.isHostOwned = false
+			if wasHostOwned {
+				agent.lastClipboardState = nil
+				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+				agent.lastAdvertisedTypes = nil
+			}
 			agent.clipMu.Unlock()
 
-			clipboard.Write(clipboard.FmtText, nil)
+			if wasHostOwned {
+				clipboard.Write(clipboard.FmtText, nil)
+			}
 			return nil
 		}
 
@@ -369,13 +376,19 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		switch vdAgentClipboard.Type {
 		case vd.VD_AGENT_CLIPBOARD_NONE:
 			agent.clipMu.Lock()
-			agent.lastClipboardState = nil
-			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
-			agent.lastAdvertisedTypes = nil
+			wasHostOwned := agent.isHostOwned
+			agent.isHostOwned = false
+			if wasHostOwned {
+				agent.lastClipboardState = nil
+				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+				agent.lastAdvertisedTypes = nil
+			}
 			agent.clipMu.Unlock()
 
-			clipboard.Write(clipboard.FmtText, nil)
-			zap.S().Debugf("Cleared agent-owned clipboard on VD_AGENT_CLIPBOARD_NONE")
+			if wasHostOwned {
+				clipboard.Write(clipboard.FmtText, nil)
+				zap.S().Debugf("Cleared agent-owned clipboard on VD_AGENT_CLIPBOARD_NONE")
+			}
 		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
 			optimized, err := imageopt.OptimizeImage(vdAgentClipboard.Data)
 			if err != nil {
@@ -398,12 +411,18 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 				}
 
 				agent.clipMu.Lock()
-				agent.lastClipboardState = nil
-				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
-				agent.lastAdvertisedTypes = nil
+				wasHostOwned := agent.isHostOwned
+				agent.isHostOwned = false
+				if wasHostOwned {
+					agent.lastClipboardState = nil
+					agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+					agent.lastAdvertisedTypes = nil
+				}
 				agent.clipMu.Unlock()
 
-				clipboard.Write(clipboard.FmtText, nil)
+				if wasHostOwned {
+					clipboard.Write(clipboard.FmtText, nil)
+				}
 				return nil
 			}
 
@@ -411,6 +430,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastClipboardState = optimized
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG}
+			agent.isHostOwned = true
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtImage, optimized)
@@ -420,6 +440,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastClipboardState = vdAgentClipboard.Data
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT}
+			agent.isHostOwned = true
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
@@ -448,13 +469,21 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 		agent.clipMu.Lock()
-		agent.lastClipboardState = nil
-		agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
-		agent.lastAdvertisedTypes = nil
+		wasHostOwned := agent.isHostOwned
+		agent.isHostOwned = false
+		if wasHostOwned {
+			agent.lastClipboardState = nil
+			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+			agent.lastAdvertisedTypes = nil
+		}
 		agent.clipMu.Unlock()
 
-		clipboard.Write(clipboard.FmtText, nil)
-		zap.S().Debugf("Cleared agent-owned clipboard on VD_AGENT_CLIPBOARD_RELEASE")
+		if wasHostOwned {
+			clipboard.Write(clipboard.FmtText, nil)
+			zap.S().Debugf("Cleared agent-owned clipboard on VD_AGENT_CLIPBOARD_RELEASE")
+		} else {
+			zap.S().Debugf("Preserved newer guest-owned clipboard on VD_AGENT_CLIPBOARD_RELEASE")
+		}
 		return nil
 
 	case vd.VD_AGENT_CLIPBOARD_REQUEST:
@@ -618,6 +647,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	agent.lastClipboardState = newClipboardState
 	agent.lastClipboardType = clipType
 	agent.lastAdvertisedTypes = types
+	agent.isHostOwned = false
 	agent.clipMu.Unlock()
 
 	if len(types) == 0 {
