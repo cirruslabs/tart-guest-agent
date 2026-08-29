@@ -241,7 +241,15 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						agent.clipMu.Unlock()
 					}
 
-					types := getAvailableGrabTypes(formats, lastImageValid)
+					var lastTextValid bool
+					if slices.Contains(formats, clipboard.FmtText) {
+						rawText := clipboard.Read(clipboard.FmtText)
+						if len(rawText) > 0 {
+							lastTextValid = true
+						}
+					}
+
+					types := getAvailableGrabTypes(formats, lastImageValid, lastTextValid)
 
 					agent.clipMu.Lock()
 					hadContent := (agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0
@@ -694,6 +702,16 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 	case vd.VD_AGENT_CLIENT_DISCONNECTED:
 		zap.S().Debugf("I: VD_AGENT_CLIENT_DISCONNECTED")
 		agent.fileXferMgr.Close()
+		agent.clipMu.Lock()
+		agent.lastAdvertisedTypes = nil
+		agent.lastHostGrabTypes = nil
+		agent.lastClipboardState = nil
+		agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+		agent.lastOptimizedImage = nil
+		agent.isHostOwned = false
+		agent.selfTextWritePending = false
+		agent.selfImageWritePending = false
+		agent.clipMu.Unlock()
 	default:
 		zap.S().Debugf("I: unhandled message type: %d", vdiAgentMessage.Type)
 	}
@@ -705,12 +723,12 @@ func (agent *VDAgent) Close() error {
 	return agent.serialPort.Close()
 }
 
-func getAvailableGrabTypes(formats []clipboard.Format, isImageValid bool) []uint32 {
+func getAvailableGrabTypes(formats []clipboard.Format, isImageValid bool, isTextValid bool) []uint32 {
 	var types []uint32
 	if slices.Contains(formats, clipboard.FmtImage) && isImageValid {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG)
 	}
-	if slices.Contains(formats, clipboard.FmtText) {
+	if slices.Contains(formats, clipboard.FmtText) && isTextValid {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
 	}
 	return types
@@ -721,7 +739,8 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	agent.clipMu.Lock()
 	hasCachedImage := len(agent.lastOptimizedImage) > 0
 	agent.clipMu.Unlock()
-	types := getAvailableGrabTypes(formats, hasCachedImage)
+	hasText := len(newClipboardState) > 0 || slices.Contains(formats, clipboard.FmtText)
+	types := getAvailableGrabTypes(formats, hasCachedImage, hasText)
 	if clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0 && !slices.Contains(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
 	}
