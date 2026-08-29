@@ -62,19 +62,20 @@ func FindSerialPortPath() string {
 }
 
 type VDAgent struct {
-	serialPort          *os.File
-	vdi                 *vdi.VDI
-	writeMu             sync.Mutex
-	lastClipboardState  []byte
-	lastClipboardType   uint32
-	lastAdvertisedTypes []uint32
-	lastHostGrabTypes   []uint32
-	lastOptimizedImage  []byte
-	isHostOwned         bool
-	selfWritePending    bool
-	clipMu              sync.Mutex
-	fileXferMgr         *filexfer.Manager
-	clipboardEnabled    bool
+	serialPort            *os.File
+	vdi                   *vdi.VDI
+	writeMu               sync.Mutex
+	lastClipboardState    []byte
+	lastClipboardType     uint32
+	lastAdvertisedTypes   []uint32
+	lastHostGrabTypes     []uint32
+	lastOptimizedImage    []byte
+	isHostOwned           bool
+	selfTextWritePending  bool
+	selfImageWritePending bool
+	clipMu                sync.Mutex
+	fileXferMgr           *filexfer.Manager
+	clipboardEnabled      bool
 }
 
 func New() (*VDAgent, error) {
@@ -190,11 +191,6 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				case <-gCtx.Done():
 					return gCtx.Err()
 				case <-pollTicker.C:
-					agent.clipMu.Lock()
-					pendingWrite := agent.selfWritePending
-					agent.selfWritePending = false
-					agent.clipMu.Unlock()
-
 					formats := clipboard.Formats()
 					var imageChanged bool
 					if slices.Contains(formats, clipboard.FmtImage) {
@@ -203,7 +199,10 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
 								lastImageValid = true
 								agent.clipMu.Lock()
-								isEcho := pendingWrite && bytes.Equal(agent.lastOptimizedImage, optimized)
+								isEcho := agent.selfImageWritePending && bytes.Equal(agent.lastOptimizedImage, optimized)
+								if isEcho {
+									agent.selfImageWritePending = false
+								}
 								agent.clipMu.Unlock()
 
 								if !isEcho && !bytes.Equal(lastImageState, optimized) {
@@ -221,6 +220,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 								lastImageState = nil
 								agent.clipMu.Lock()
 								agent.lastOptimizedImage = nil
+								agent.selfImageWritePending = false
 								agent.clipMu.Unlock()
 								zap.S().Warnf("ignoring unservable guest clipboard image (%d bytes): %v", len(rawImg), err)
 							}
@@ -229,6 +229,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							lastImageState = nil
 							agent.clipMu.Lock()
 							agent.lastOptimizedImage = nil
+							agent.selfImageWritePending = false
 							agent.clipMu.Unlock()
 						}
 					} else {
@@ -236,6 +237,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						lastImageState = nil
 						agent.clipMu.Lock()
 						agent.lastOptimizedImage = nil
+						agent.selfImageWritePending = false
 						agent.clipMu.Unlock()
 					}
 
@@ -516,7 +518,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG}
 			agent.lastOptimizedImage = optimized
 			agent.isHostOwned = true
-			agent.selfWritePending = true
+			agent.selfImageWritePending = true
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtImage, optimized)
@@ -527,7 +529,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT}
 			agent.isHostOwned = true
-			agent.selfWritePending = true
+			agent.selfTextWritePending = true
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
@@ -725,15 +727,15 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	}
 
 	agent.clipMu.Lock()
-	isSelfWrite := agent.selfWritePending &&
+	isSelfWrite := agent.selfTextWritePending &&
 		bytes.Equal(agent.lastClipboardState, newClipboardState) &&
 		agent.lastClipboardType == clipType &&
 		slices.Equal(agent.lastAdvertisedTypes, types)
 
 	if isSelfWrite {
-		agent.selfWritePending = false
+		agent.selfTextWritePending = false
 		agent.clipMu.Unlock()
-		zap.S().Debugf("suppressing self-write echo grab for inbound host clipboard")
+		zap.S().Debugf("suppressing self-write echo grab for inbound host text clipboard")
 		return nil
 	}
 
@@ -744,7 +746,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		agent.clipMu.Unlock()
 		return nil
 	}
-	agent.selfWritePending = false
+	agent.selfTextWritePending = false
 	agent.lastClipboardState = newClipboardState
 	agent.lastClipboardType = clipType
 	agent.lastAdvertisedTypes = types
