@@ -69,6 +69,7 @@ type VDAgent struct {
 	lastClipboardType   uint32
 	lastAdvertisedTypes []uint32
 	lastHostGrabTypes   []uint32
+	lastOptimizedImage  []byte
 	isHostOwned         bool
 	selfWritePending    bool
 	clipMu              sync.Mutex
@@ -179,13 +180,48 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			pollTicker := time.NewTicker(500 * time.Millisecond)
 			defer pollTicker.Stop()
 
+			var (
+				lastFormats    []clipboard.Format
+				lastImageValid bool
+			)
+
 			for {
 				select {
 				case <-gCtx.Done():
 					return gCtx.Err()
 				case <-pollTicker.C:
 					formats := clipboard.Formats()
-					types := getAvailableGrabTypes(formats)
+					sameFormats := slices.Equal(lastFormats, formats)
+
+					if !sameFormats {
+						lastFormats = formats
+						if slices.Contains(formats, clipboard.FmtImage) {
+							rawImg := clipboard.Read(clipboard.FmtImage)
+							if len(rawImg) > 0 {
+								if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
+									lastImageValid = true
+									agent.clipMu.Lock()
+									agent.lastOptimizedImage = optimized
+									agent.clipMu.Unlock()
+								} else {
+									lastImageValid = false
+									agent.clipMu.Lock()
+									agent.lastOptimizedImage = nil
+									agent.clipMu.Unlock()
+									zap.S().Warnf("ignoring unservable guest clipboard image (%d bytes): %v", len(rawImg), err)
+								}
+							} else {
+								lastImageValid = false
+							}
+						} else {
+							lastImageValid = false
+							agent.clipMu.Lock()
+							agent.lastOptimizedImage = nil
+							agent.clipMu.Unlock()
+						}
+					}
+
+					types := getAvailableGrabTypes(formats, lastImageValid)
 
 					agent.clipMu.Lock()
 					hadContent := (agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0
@@ -199,6 +235,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
 							agent.lastAdvertisedTypes = nil
 							agent.isHostOwned = false
+							agent.lastOptimizedImage = nil
 							agent.clipMu.Unlock()
 
 							releaseMsg := vd.VDAgentClipboardRelease{
@@ -454,6 +491,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastClipboardState = optimized
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG}
+			agent.lastOptimizedImage = optimized
 			agent.isHostOwned = true
 			agent.selfWritePending = true
 			agent.clipMu.Unlock()
@@ -536,13 +574,22 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 
 		switch respType {
 		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
-			rawImg := clipboard.Read(clipboard.FmtImage)
-			if len(rawImg) > 0 {
-				if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
-					data = optimized
-					respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
-				} else {
-					zap.S().Warnf("failed to optimize local clipboard image for request: %v", err)
+			agent.clipMu.Lock()
+			cached := agent.lastOptimizedImage
+			agent.clipMu.Unlock()
+
+			if len(cached) > 0 {
+				data = cached
+				respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+			} else {
+				rawImg := clipboard.Read(clipboard.FmtImage)
+				if len(rawImg) > 0 {
+					if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
+						data = optimized
+						respType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+					} else {
+						zap.S().Warnf("failed to optimize local clipboard image for request: %v", err)
+					}
 				}
 			}
 		case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
@@ -633,9 +680,9 @@ func (agent *VDAgent) Close() error {
 	return agent.serialPort.Close()
 }
 
-func getAvailableGrabTypes(formats []clipboard.Format) []uint32 {
+func getAvailableGrabTypes(formats []clipboard.Format, isImageValid bool) []uint32 {
 	var types []uint32
-	if slices.Contains(formats, clipboard.FmtImage) {
+	if slices.Contains(formats, clipboard.FmtImage) && isImageValid {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG)
 	}
 	if slices.Contains(formats, clipboard.FmtText) {
@@ -646,7 +693,13 @@ func getAvailableGrabTypes(formats []clipboard.Format) []uint32 {
 
 func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType uint32) error {
 	formats := clipboard.Formats()
-	types := getAvailableGrabTypes(formats)
+	agent.clipMu.Lock()
+	hasCachedImage := len(agent.lastOptimizedImage) > 0
+	agent.clipMu.Unlock()
+	types := getAvailableGrabTypes(formats, hasCachedImage)
+	if clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0 && !slices.Contains(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
+		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+	}
 
 	agent.clipMu.Lock()
 	isSelfWrite := agent.selfWritePending &&
