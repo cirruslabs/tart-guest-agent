@@ -70,6 +70,7 @@ type VDAgent struct {
 	lastAdvertisedTypes []uint32
 	lastHostGrabTypes   []uint32
 	isHostOwned         bool
+	selfWritePending    bool
 	clipMu              sync.Mutex
 	fileXferMgr         *filexfer.Manager
 	clipboardEnabled    bool
@@ -454,6 +455,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG}
 			agent.isHostOwned = true
+			agent.selfWritePending = true
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtImage, optimized)
@@ -464,6 +466,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
 			agent.lastAdvertisedTypes = []uint32{vd.VD_AGENT_CLIPBOARD_UTF8_TEXT}
 			agent.isHostOwned = true
+			agent.selfWritePending = true
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
@@ -646,6 +649,18 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	types := getAvailableGrabTypes(formats)
 
 	agent.clipMu.Lock()
+	isSelfWrite := agent.selfWritePending &&
+		bytes.Equal(agent.lastClipboardState, newClipboardState) &&
+		agent.lastClipboardType == clipType &&
+		slices.Equal(agent.lastAdvertisedTypes, types)
+
+	if isSelfWrite {
+		agent.selfWritePending = false
+		agent.clipMu.Unlock()
+		zap.S().Debugf("suppressing self-write echo grab for inbound host clipboard")
+		return nil
+	}
+
 	if !agent.isHostOwned &&
 		bytes.Equal(agent.lastClipboardState, newClipboardState) &&
 		agent.lastClipboardType == clipType &&
@@ -653,6 +668,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		agent.clipMu.Unlock()
 		return nil
 	}
+	agent.selfWritePending = false
 	agent.lastClipboardState = newClipboardState
 	agent.lastClipboardType = clipType
 	agent.lastAdvertisedTypes = types
