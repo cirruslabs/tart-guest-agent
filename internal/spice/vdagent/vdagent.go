@@ -178,8 +178,6 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			pollTicker := time.NewTicker(500 * time.Millisecond)
 			defer pollTicker.Stop()
 
-			var lastFormats []clipboard.Format
-
 			for {
 				select {
 				case <-gCtx.Done():
@@ -199,12 +197,11 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 								return fmt.Errorf("failed to process unsupported clipboard release: %w", err)
 							}
 						}
-						lastFormats = formats
 						continue
 					}
 
-					// If formats changed and an image format is now present, read image payload once
-					if slices.Contains(formats, clipboard.FmtImage) && !slices.Equal(lastFormats, formats) {
+					// If an image format is present on the clipboard, check for new/updated image data
+					if slices.Contains(formats, clipboard.FmtImage) {
 						if imgData := clipboard.Read(clipboard.FmtImage); len(imgData) > 0 {
 							if err := agent.processClipboardState(imgData, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG); err != nil {
 								if gCtx.Err() != nil {
@@ -214,7 +211,6 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							}
 						}
 					}
-					lastFormats = formats
 
 				case textData, ok := <-textCh:
 					if !ok {
