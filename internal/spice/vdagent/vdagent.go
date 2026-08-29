@@ -617,6 +617,9 @@ func (agent *VDAgent) isServableImage(newClipboardState []byte, clipType uint32)
 	if clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
 		rawImg = newClipboardState
 	} else {
+		if !slices.Contains(clipboard.Formats(), clipboard.FmtImage) {
+			return false
+		}
 		rawImg = clipboard.Read(clipboard.FmtImage)
 	}
 	if len(rawImg) == 0 {
@@ -638,17 +641,18 @@ func getAvailableGrabTypes(hasImage bool, hasText bool) []uint32 {
 }
 
 func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType uint32) error {
+	agent.clipMu.Lock()
+	if bytes.Equal(agent.lastClipboardState, newClipboardState) && agent.lastClipboardType == clipType {
+		agent.clipMu.Unlock()
+		return nil
+	}
+	agent.clipMu.Unlock()
+
 	hasImage := agent.isServableImage(newClipboardState, clipType)
 	hasText := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0) || len(clipboard.Read(clipboard.FmtText)) > 0
 	types := getAvailableGrabTypes(hasImage, hasText)
 
 	agent.clipMu.Lock()
-	if bytes.Equal(agent.lastClipboardState, newClipboardState) &&
-		agent.lastClipboardType == clipType &&
-		slices.Equal(agent.lastAdvertisedTypes, types) {
-		agent.clipMu.Unlock()
-		return nil
-	}
 	agent.lastClipboardState = newClipboardState
 	agent.lastClipboardType = clipType
 	agent.lastAdvertisedTypes = types
