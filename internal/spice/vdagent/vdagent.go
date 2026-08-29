@@ -326,6 +326,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.clipMu.Lock()
 			agent.lastClipboardState = nil
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+			agent.lastAdvertisedTypes = nil
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, nil)
@@ -365,6 +366,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			agent.clipMu.Lock()
 			agent.lastClipboardState = nil
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+			agent.lastAdvertisedTypes = nil
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, nil)
@@ -376,23 +378,33 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 				agent.clipMu.Lock()
 				agent.lastClipboardState = nil
 				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+				agent.lastAdvertisedTypes = nil
 				agent.clipMu.Unlock()
 
 				clipboard.Write(clipboard.FmtText, nil)
 				return nil
 			}
 
+			types := getAvailableGrabTypes(true, len(clipboard.Read(clipboard.FmtText)) > 0)
 			agent.clipMu.Lock()
 			agent.lastClipboardState = optimized
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+			agent.lastAdvertisedTypes = types
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtImage, optimized)
 			zap.S().Debugf("Wrote image clipboard data (%d bytes -> %d bytes)", len(vdAgentClipboard.Data), len(optimized))
 		case vd.VD_AGENT_CLIPBOARD_UTF8_TEXT:
+			hasImg := false
+			if rawImg := clipboard.Read(clipboard.FmtImage); len(rawImg) > 0 {
+				_, err := imageopt.OptimizeImage(rawImg)
+				hasImg = err == nil
+			}
+			types := getAvailableGrabTypes(hasImg, len(vdAgentClipboard.Data) > 0)
 			agent.clipMu.Lock()
 			agent.lastClipboardState = vdAgentClipboard.Data
 			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+			agent.lastAdvertisedTypes = types
 			agent.clipMu.Unlock()
 
 			clipboard.Write(clipboard.FmtText, vdAgentClipboard.Data)
@@ -423,6 +435,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		agent.clipMu.Lock()
 		agent.lastClipboardState = nil
 		agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+		agent.lastAdvertisedTypes = nil
 		agent.clipMu.Unlock()
 
 		clipboard.Write(clipboard.FmtText, nil)
