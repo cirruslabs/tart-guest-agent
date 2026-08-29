@@ -184,7 +184,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 					hadContent := agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0
 					agent.clipMu.Unlock()
 					if hadContent {
-						if len(clipboard.Read(clipboard.FmtText)) == 0 && len(clipboard.Read(clipboard.FmtImage)) == 0 {
+						if len(clipboard.Formats()) == 0 {
 							if err := agent.processClipboardState(nil, vd.VD_AGENT_CLIPBOARD_NONE); err != nil {
 								if gCtx.Err() != nil {
 									return gCtx.Err()
