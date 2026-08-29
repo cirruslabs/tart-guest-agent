@@ -192,25 +192,29 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				case <-pollTicker.C:
 					agent.clipMu.Lock()
 					pendingWrite := agent.selfWritePending
+					agent.selfWritePending = false
 					agent.clipMu.Unlock()
-					if pendingWrite {
-						continue
-					}
 
 					formats := clipboard.Formats()
+					var imageChanged bool
 					if slices.Contains(formats, clipboard.FmtImage) {
 						rawImg := clipboard.Read(clipboard.FmtImage)
 						if len(rawImg) > 0 {
 							if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
 								lastImageValid = true
-								imageChanged := !bytes.Equal(lastImageState, optimized)
-								lastImageState = optimized
+								agent.clipMu.Lock()
+								isEcho := pendingWrite && bytes.Equal(agent.lastOptimizedImage, optimized)
+								agent.clipMu.Unlock()
 
-								if imageChanged {
+								if !isEcho && !bytes.Equal(lastImageState, optimized) {
+									imageChanged = true
+									lastImageState = optimized
 									agent.clipMu.Lock()
 									agent.lastOptimizedImage = optimized
 									agent.isHostOwned = false
 									agent.clipMu.Unlock()
+								} else if isEcho {
+									lastImageState = optimized
 								}
 							} else {
 								lastImageValid = false
@@ -264,8 +268,8 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						continue
 					}
 
-					// If advertised formats changed (e.g. image copied or format added/removed), update grab
-					if !sameTypes {
+					// If advertised formats changed or local image bytes changed, send fresh grab
+					if !sameTypes || (imageChanged && lastImageValid) {
 						agent.clipMu.Lock()
 						agent.lastAdvertisedTypes = types
 						agent.isHostOwned = false
