@@ -184,31 +184,49 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 					return gCtx.Err()
 				case <-pollTicker.C:
 					formats := clipboard.Formats()
+					types := getAvailableGrabTypes(formats)
+
 					agent.clipMu.Lock()
-					hadContent := agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0
+					hadContent := (agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0
+					sameTypes := slices.Equal(agent.lastAdvertisedTypes, types)
 					agent.clipMu.Unlock()
 
-					if !hasServableClipboardFormat(formats) {
+					if len(types) == 0 {
 						if hadContent {
-							if err := agent.processClipboardState(nil, vd.VD_AGENT_CLIPBOARD_NONE); err != nil {
-								if gCtx.Err() != nil {
-									return gCtx.Err()
-								}
-								return fmt.Errorf("failed to process unsupported clipboard release: %w", err)
+							agent.clipMu.Lock()
+							agent.lastClipboardState = nil
+							agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
+							agent.lastAdvertisedTypes = nil
+							agent.isHostOwned = false
+							agent.clipMu.Unlock()
+
+							releaseMsg := vd.VDAgentClipboardRelease{
+								Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
+							}
+							releaseBytes, err := releaseMsg.Encode()
+							if err == nil {
+								zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
+								_ = agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes)
 							}
 						}
 						continue
 					}
 
-					// If an image format is present on the clipboard, check for new/updated image data
-					if slices.Contains(formats, clipboard.FmtImage) {
-						if imgData := clipboard.Read(clipboard.FmtImage); len(imgData) > 0 {
-							if err := agent.processClipboardState(imgData, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG); err != nil {
-								if gCtx.Err() != nil {
-									return gCtx.Err()
-								}
-								return fmt.Errorf("failed to process image clipboard state: %w", err)
-							}
+					// If advertised formats changed (e.g. image copied or format added/removed), update grab
+					if !sameTypes {
+						agent.clipMu.Lock()
+						agent.lastAdvertisedTypes = types
+						agent.isHostOwned = false
+						agent.clipMu.Unlock()
+
+						ourGrab := vd.VDAgentClipboardGrab{
+							Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
+							Types:     types,
+						}
+						ourGrabBytes, err := ourGrab.Encode()
+						if err == nil {
+							zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (types=%v)", types)
+							_ = agent.writeMessage(vd.VD_AGENT_CLIPBOARD_GRAB, ourGrabBytes)
 						}
 					}
 
@@ -612,47 +630,29 @@ func (agent *VDAgent) Close() error {
 	return agent.serialPort.Close()
 }
 
-func (agent *VDAgent) isServableImage(newClipboardState []byte, clipType uint32) bool {
-	var rawImg []byte
-	if clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
-		rawImg = newClipboardState
-	} else {
-		if !slices.Contains(clipboard.Formats(), clipboard.FmtImage) {
-			return false
-		}
-		rawImg = clipboard.Read(clipboard.FmtImage)
-	}
-	if len(rawImg) == 0 {
-		return false
-	}
-	_, err := imageopt.OptimizeImage(rawImg)
-	return err == nil
-}
-
-func getAvailableGrabTypes(hasImage bool, hasText bool) []uint32 {
+func getAvailableGrabTypes(formats []clipboard.Format) []uint32 {
 	var types []uint32
-	if hasImage {
+	if slices.Contains(formats, clipboard.FmtImage) {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG)
 	}
-	if hasText {
+	if slices.Contains(formats, clipboard.FmtText) {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
 	}
 	return types
 }
 
 func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType uint32) error {
+	formats := clipboard.Formats()
+	types := getAvailableGrabTypes(formats)
+
 	agent.clipMu.Lock()
-	if bytes.Equal(agent.lastClipboardState, newClipboardState) && agent.lastClipboardType == clipType {
+	if !agent.isHostOwned &&
+		bytes.Equal(agent.lastClipboardState, newClipboardState) &&
+		agent.lastClipboardType == clipType &&
+		slices.Equal(agent.lastAdvertisedTypes, types) {
 		agent.clipMu.Unlock()
 		return nil
 	}
-	agent.clipMu.Unlock()
-
-	hasImage := agent.isServableImage(newClipboardState, clipType)
-	hasText := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0) || len(clipboard.Read(clipboard.FmtText)) > 0
-	types := getAvailableGrabTypes(hasImage, hasText)
-
-	agent.clipMu.Lock()
 	agent.lastClipboardState = newClipboardState
 	agent.lastClipboardType = clipType
 	agent.lastAdvertisedTypes = types

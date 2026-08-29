@@ -170,25 +170,25 @@ func TestSendClipboardData_Chunking(t *testing.T) {
 
 func TestGetAvailableGrabTypes(t *testing.T) {
 	// Only text
-	types := getAvailableGrabTypes(false, true)
+	types := getAvailableGrabTypes([]clipboard.Format{clipboard.FmtText})
 	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 		t.Fatalf("expected [UTF8_TEXT], got %v", types)
 	}
 
 	// Only image
-	types = getAvailableGrabTypes(true, false)
+	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage})
 	if len(types) != 1 || types[0] != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
 		t.Fatalf("expected [IMAGE_PNG], got %v", types)
 	}
 
 	// Both image and text
-	types = getAvailableGrabTypes(true, true)
+	types = getAvailableGrabTypes([]clipboard.Format{clipboard.FmtImage, clipboard.FmtText})
 	if len(types) != 2 || types[0] != vd.VD_AGENT_CLIPBOARD_IMAGE_PNG || types[1] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 		t.Fatalf("expected [IMAGE_PNG, UTF8_TEXT], got %v", types)
 	}
 
 	// Neither image nor text available (e.g. cleared clipboard or unservable data)
-	types = getAvailableGrabTypes(false, false)
+	types = getAvailableGrabTypes(nil)
 	if len(types) != 0 {
 		t.Fatalf("expected empty types when no formats available, got %v", types)
 	}
