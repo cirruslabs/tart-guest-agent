@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -61,14 +62,15 @@ func FindSerialPortPath() string {
 }
 
 type VDAgent struct {
-	serialPort         *os.File
-	vdi                *vdi.VDI
-	writeMu            sync.Mutex
-	lastClipboardState []byte
-	lastClipboardType  uint32
-	clipMu             sync.Mutex
-	fileXferMgr        *filexfer.Manager
-	clipboardEnabled   bool
+	serialPort          *os.File
+	vdi                 *vdi.VDI
+	writeMu             sync.Mutex
+	lastClipboardState  []byte
+	lastClipboardType   uint32
+	lastAdvertisedTypes []uint32
+	clipMu              sync.Mutex
+	fileXferMgr         *filexfer.Manager
+	clipboardEnabled    bool
 }
 
 func New() (*VDAgent, error) {
@@ -574,18 +576,21 @@ func getAvailableGrabTypes(hasImage bool, hasText bool) []uint32 {
 }
 
 func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType uint32) error {
+	hasImage := agent.isServableImage(newClipboardState, clipType)
+	hasText := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0) || len(clipboard.Read(clipboard.FmtText)) > 0
+	types := getAvailableGrabTypes(hasImage, hasText)
+
 	agent.clipMu.Lock()
-	if bytes.Equal(agent.lastClipboardState, newClipboardState) && agent.lastClipboardType == clipType {
+	if bytes.Equal(agent.lastClipboardState, newClipboardState) &&
+		agent.lastClipboardType == clipType &&
+		slices.Equal(agent.lastAdvertisedTypes, types) {
 		agent.clipMu.Unlock()
 		return nil
 	}
 	agent.lastClipboardState = newClipboardState
 	agent.lastClipboardType = clipType
+	agent.lastAdvertisedTypes = types
 	agent.clipMu.Unlock()
-
-	hasImage := agent.isServableImage(newClipboardState, clipType)
-	hasText := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0) || len(clipboard.Read(clipboard.FmtText)) > 0
-	types := getAvailableGrabTypes(hasImage, hasText)
 
 	if len(types) == 0 {
 		zap.S().Debugf("no servable clipboard formats available, releasing clipboard")
