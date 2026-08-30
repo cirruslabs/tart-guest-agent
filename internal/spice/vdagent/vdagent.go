@@ -181,8 +181,9 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 			defer pollTicker.Stop()
 
 			var (
-				lastImageState []byte
-				lastImageValid bool
+				lastRawImageState []byte
+				lastImageState    []byte
+				lastImageValid    bool
 			)
 
 			for {
@@ -195,35 +196,41 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 					if slices.Contains(formats, clipboard.FmtImage) {
 						rawImg := clipboard.Read(clipboard.FmtImage)
 						if len(rawImg) > 0 {
-							if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
-								lastImageValid = true
-								agent.clipMu.Lock()
-								isEcho := agent.selfImageWritePending && bytes.Equal(agent.lastOptimizedImage, optimized)
-								if isEcho {
-									agent.selfImageWritePending = false
-								}
-								agent.clipMu.Unlock()
-
-								if !isEcho && !bytes.Equal(lastImageState, optimized) {
-									imageChanged = true
-									lastImageState = optimized
-									agent.clipMu.Lock()
-									agent.lastOptimizedImage = optimized
-									agent.isHostOwned = false
-									agent.clipMu.Unlock()
-								} else if isEcho {
-									lastImageState = optimized
-								}
+							if bytes.Equal(lastRawImageState, rawImg) {
+								// Payload has not changed, reuse cached optimization result
 							} else {
-								lastImageValid = false
-								lastImageState = nil
-								agent.clipMu.Lock()
-								agent.lastOptimizedImage = nil
-								agent.selfImageWritePending = false
-								agent.clipMu.Unlock()
-								zap.S().Warnf("ignoring unservable guest clipboard image (%d bytes): %v", len(rawImg), err)
+								lastRawImageState = rawImg
+								if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
+									lastImageValid = true
+									agent.clipMu.Lock()
+									isEcho := agent.selfImageWritePending && bytes.Equal(agent.lastOptimizedImage, optimized)
+									if isEcho {
+										agent.selfImageWritePending = false
+									}
+									agent.clipMu.Unlock()
+
+									if !isEcho && !bytes.Equal(lastImageState, optimized) {
+										imageChanged = true
+										lastImageState = optimized
+										agent.clipMu.Lock()
+										agent.lastOptimizedImage = optimized
+										agent.isHostOwned = false
+										agent.clipMu.Unlock()
+									} else if isEcho {
+										lastImageState = optimized
+									}
+								} else {
+									lastImageValid = false
+									lastImageState = nil
+									agent.clipMu.Lock()
+									agent.lastOptimizedImage = nil
+									agent.selfImageWritePending = false
+									agent.clipMu.Unlock()
+									zap.S().Warnf("ignoring unservable guest clipboard image (%d bytes): %v", len(rawImg), err)
+								}
 							}
 						} else {
+							lastRawImageState = nil
 							lastImageValid = false
 							lastImageState = nil
 							agent.clipMu.Lock()
@@ -232,6 +239,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							agent.clipMu.Unlock()
 						}
 					} else {
+						lastRawImageState = nil
 						lastImageValid = false
 						lastImageState = nil
 						agent.clipMu.Lock()
@@ -738,9 +746,9 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	agent.clipMu.Lock()
 	hasCachedImage := len(agent.lastOptimizedImage) > 0
 	agent.clipMu.Unlock()
-	hasText := len(newClipboardState) > 0 || slices.Contains(formats, clipboard.FmtText)
+	hasText := len(newClipboardState) > 0 && clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
 	types := getAvailableGrabTypes(formats, hasCachedImage, hasText)
-	if clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) > 0 && !slices.Contains(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
+	if hasText && !slices.Contains(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
 	}
 
