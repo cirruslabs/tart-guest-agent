@@ -248,11 +248,23 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						agent.clipMu.Unlock()
 					}
 
-					var lastTextValid bool
+					var (
+						lastTextValid bool
+						textChanged   bool
+					)
 					if slices.Contains(formats, clipboard.FmtText) {
 						rawText := clipboard.Read(clipboard.FmtText)
 						if len(rawText) > 0 {
 							lastTextValid = true
+							agent.clipMu.Lock()
+							isEcho := agent.selfTextWritePending && bytes.Equal(agent.lastClipboardState, rawText)
+							if isEcho {
+								agent.selfTextWritePending = false
+							}
+							if !isEcho && (!bytes.Equal(agent.lastClipboardState, rawText) || agent.lastClipboardType != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
+								textChanged = true
+							}
+							agent.clipMu.Unlock()
 						}
 					}
 
@@ -286,13 +298,13 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						continue
 					}
 
-					// If host currently owns clipboard and local image bytes did not change, suppress re-grabbing
-					if isHost && !imageChanged {
+					// If host currently owns clipboard and no local clipboard data changed, suppress re-grabbing
+					if isHost && !imageChanged && !textChanged {
 						continue
 					}
 
-					// If advertised formats changed or local image bytes changed, send fresh grab
-					if !sameTypes || (imageChanged && lastImageValid) {
+					// If advertised formats changed or local content changed, send fresh grab
+					if !sameTypes || (imageChanged && lastImageValid) || (textChanged && lastTextValid) {
 						agent.clipMu.Lock()
 						agent.lastAdvertisedTypes = types
 						agent.isHostOwned = false
