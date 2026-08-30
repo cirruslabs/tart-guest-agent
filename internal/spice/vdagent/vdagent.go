@@ -261,6 +261,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 					agent.clipMu.Lock()
 					hadContent := (agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0
 					sameTypes := slices.Equal(agent.lastAdvertisedTypes, types)
+					isHost := agent.isHostOwned
 					agent.clipMu.Unlock()
 
 					if len(types) == 0 {
@@ -282,6 +283,11 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 								_ = agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes)
 							}
 						}
+						continue
+					}
+
+					// If host currently owns clipboard and local image bytes did not change, suppress re-grabbing
+					if isHost && !imageChanged {
 						continue
 					}
 
@@ -421,28 +427,22 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		agent.clipMu.Lock()
 		agent.lastHostGrabTypes = vdAgentClipboardGrab.Types
 		agent.lastAdvertisedTypes = nil
-		if !agent.isHostOwned {
-			agent.lastClipboardState = nil
-			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
-		}
+		agent.isHostOwned = true
+		agent.lastClipboardState = nil
+		agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
 		agent.clipMu.Unlock()
 
 		reqType, ok := selectGrabRequestType(vdAgentClipboardGrab.Types)
 		if !ok {
 			zap.S().Debugf("clearing stale clipboard on grab with unsupported format types: %v", vdAgentClipboardGrab.Types)
 			agent.clipMu.Lock()
-			wasHostOwned := agent.isHostOwned
-			agent.isHostOwned = false
+			agent.isHostOwned = true
 			agent.lastAdvertisedTypes = nil
-			if wasHostOwned {
-				agent.lastClipboardState = nil
-				agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
-			}
+			agent.lastClipboardState = nil
+			agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
 			agent.clipMu.Unlock()
 
-			if wasHostOwned {
-				clipboard.Write(clipboard.FmtText, nil)
-			}
+			clipboard.Write(clipboard.FmtText, nil)
 			return nil
 		}
 
