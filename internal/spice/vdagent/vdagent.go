@@ -397,14 +397,34 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 			return nil
 		}
 
-		currentText := clipboard.Read(clipboard.FmtText)
+		formats := clipboard.Formats()
+		var (
+			baselineData []byte
+			baselineType uint32 = vd.VD_AGENT_CLIPBOARD_NONE
+		)
+		if slices.Contains(formats, clipboard.FmtImage) {
+			rawImg := clipboard.Read(clipboard.FmtImage)
+			if len(rawImg) > 0 {
+				baselineData = rawImg
+				baselineType = vd.VD_AGENT_CLIPBOARD_IMAGE_PNG
+			}
+		}
+		if baselineType == vd.VD_AGENT_CLIPBOARD_NONE && slices.Contains(formats, clipboard.FmtText) {
+			rawText := clipboard.Read(clipboard.FmtText)
+			if len(rawText) > 0 {
+				baselineData = rawText
+				baselineType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+			}
+		}
+
 		agent.clipMu.Lock()
 		agent.lastHostGrabTypes = vdAgentClipboardGrab.Types
 		agent.lastAdvertisedTypes = nil
 		agent.isHostOwned = true
-		agent.lastClipboardState = currentText
-		agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_UTF8_TEXT
+		agent.lastClipboardState = baselineData
+		agent.lastClipboardType = baselineType
 		agent.selfImageWritePending = false
+		agent.selfTextWritePending = false
 		agent.clipMu.Unlock()
 
 		reqType, ok := selectGrabRequestType(vdAgentClipboardGrab.Types)
