@@ -22,3 +22,24 @@ To run all features appropriate for a given context, use component groups:
 * `--run-agent`
     * implies `--run-vdagent --run-rpc` 
     * example usage: [`tart-guest-agent.plist`](https://github.com/cirruslabs/macos-image-templates/blob/main/data/tart-guest-agent.plist)
+
+## macOS signing and guest compatibility libraries
+
+Darwin releases retain Hardened Runtime and the `tart-guest-agent` signing
+identifier. They allow DYLD environment variables and disable library validation
+so image builders can opt the agent into a guest-installed compatibility library,
+such as the Tart Metal shim, without re-signing it and changing its TCC identity.
+These exceptions permit loading libraries not signed by the agent's developer;
+they do not install a library or enable injection by default. Keep any configured
+library and launchd plist root-owned and non-writable by untrusted users. The same
+binary implements agent and daemon modes, so both carry these entitlements.
+
+Snapshots use the same runtime options and entitlements with an ad-hoc signature.
+The existing macOS PR tests build the real agent and check that a hardened binary
+rejects injection without the entitlements and accepts it with them. The archive
+hook repeats the check against the final signed release executable and checks
+entitlements for every architecture. Run it manually with:
+
+```sh
+sh packaging/verify-macos-signing.sh /path/to/tart-guest-agent
+```
