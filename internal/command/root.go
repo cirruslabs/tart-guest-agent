@@ -16,6 +16,8 @@ import (
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdagent"
 	"github.com/cirruslabs/tart-guest-agent/internal/tart"
+	"github.com/cirruslabs/tart-guest-agent/internal/tray"
+	"github.com/cirruslabs/tart-guest-agent/internal/ui"
 	"github.com/cirruslabs/tart-guest-agent/internal/version"
 	"github.com/cirruslabs/tart-guest-agent/internal/vsock"
 	"github.com/spf13/cobra"
@@ -27,10 +29,13 @@ import (
 var resizeDisk bool
 var runVdagent bool
 var runRPC bool
+var runTray bool
 
 var runDaemon bool
 var runAgent bool
 var runDoctor bool
+var runNotifications bool
+var runSettings bool
 
 var debug bool
 
@@ -67,12 +72,45 @@ func NewRootCommand() *cobra.Command {
 	doctorCmd.Flags().BoolVarP(&enableNotify, "notify", "n", false, "send desktop notification with diagnostic results")
 	cmd.AddCommand(doctorCmd)
 
+	// Tray subcommand
+	trayCmd := &cobra.Command{
+		Use:   "tray",
+		Short: "Run guest agent system tray / status bar service",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return tray.New().Run(cmd.Context())
+		},
+	}
+	cmd.AddCommand(trayCmd)
+
+	// Notifications panel subcommand
+	notificationsCmd := &cobra.Command{
+		Use:   "notifications",
+		Short: "Open guest agent notifications and recent activity panel",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return ui.ShowNotificationsPanel()
+		},
+	}
+	cmd.AddCommand(notificationsCmd)
+
+	// Settings dialog subcommand
+	settingsCmd := &cobra.Command{
+		Use:   "settings",
+		Short: "Open guest agent interactive settings and preferences dialog",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return ui.ShowSettingsDialog()
+		},
+	}
+	cmd.AddCommand(settingsCmd)
+
 	// Individual components
 	cmd.Flags().BoolVar(&resizeDisk, "resize-disk", false, "resize disk")
 	cmd.Flags().BoolVar(&runVdagent, "run-vdagent", false, "run vdagent")
 	cmd.Flags().BoolVar(&runRPC, "run-rpc", false, "run RPC service (currently required "+
 		"to support \"tart exec\" functionality)")
+	cmd.Flags().BoolVar(&runTray, "run-tray", false, "run system tray / status bar service")
 	cmd.Flags().BoolVar(&runDoctor, "doctor", false, "run guest agent environment and capability diagnostics")
+	cmd.Flags().BoolVar(&runNotifications, "notifications", false, "open recent notifications and activity panel")
+	cmd.Flags().BoolVar(&runSettings, "settings", false, "open settings and preferences dialog")
 
 	// Component groups
 	cmd.Flags().BoolVar(&runDaemon, "run-daemon", false, "identical to running the agent"+
@@ -89,6 +127,12 @@ func run(cmd *cobra.Command, args []string) error {
 	if runDoctor {
 		os.Exit(doctor.PrintDoctorReport(false, false))
 	}
+	if runNotifications {
+		return ui.ShowNotificationsPanel()
+	}
+	if runSettings {
+		return ui.ShowSettingsDialog()
+	}
 	// Component groups automatically enable certain individual components
 	if runDaemon {
 		resizeDisk = true
@@ -99,7 +143,7 @@ func run(cmd *cobra.Command, args []string) error {
 		runRPC = true
 	}
 
-	if !resizeDisk && !runVdagent && !runRPC {
+	if !resizeDisk && !runVdagent && !runRPC && !runTray {
 		return fmt.Errorf("at least one component must be enabled")
 	}
 
@@ -168,6 +212,16 @@ func run(cmd *cobra.Command, args []string) error {
 				}
 			}
 		})
+	}
+
+	if runTray {
+		group.Go(func() error {
+			return tray.New().Run(ctx)
+		})
+	}
+
+	if runVdagent || runAgent {
+		tray.EmitStartupToast()
 	}
 
 	// When running in daemon or agent mode, wait indefinitely until terminated

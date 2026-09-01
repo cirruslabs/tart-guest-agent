@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cirruslabs/tart-guest-agent/internal/notify"
+	"github.com/cirruslabs/tart-guest-agent/internal/settings"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"go.uber.org/zap"
 )
@@ -53,6 +55,13 @@ func DefaultDownloadDir() string {
 		}
 		return home
 	}
+
+	if s := settings.Get(); s != nil && s.DownloadDir != "" {
+		if err := os.MkdirAll(s.DownloadDir, 0755); err == nil {
+			return s.DownloadDir
+		}
+	}
+
 	return filepath.Join(os.TempDir(), "tart-transfers")
 }
 
@@ -261,6 +270,8 @@ func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, boo
 
 	zap.S().Infof("filexfer: completed transfer id=%d (%s, total=%d bytes) successfully",
 		task.id, task.name, task.bytesRcvd)
+
+	notify.FileTransferCompleted(task.name, int64(task.bytesRcvd))
 
 	return &vd.VDAgentFileXferStatus{
 		ID:     task.id,

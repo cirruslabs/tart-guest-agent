@@ -19,6 +19,11 @@ Currently implemented features:
     * allows resolving VM's IP address without relying on DHCP leases and/or an ARP table
 * Environment and capability diagnostics (`tart-guest-agent doctor` or `--doctor`)
     * checks SPICE serial port accessibility, Wayland/XWayland display sessions, clipboard backends, system CLI tools, and file transfer download targets with actionable remediation hints
+* System Tray / Status Bar and Notifications (`tart-guest-agent tray` or `--run-tray`)
+    * visual status indicator for active guest services with quick menu actions
+    * interactive notifications panel (`tart-guest-agent notifications` or `--notifications`) showing recent clipboard and file transfer events
+    * graphical settings and preferences panel (`tart-guest-agent settings` or `--settings`) to toggle notifications, image clipboard, file transfer, and download folders
+    * desktop notifications for agent startup and completed file transfers
 
 To run all features appropriate for a given context, use component groups:
 
