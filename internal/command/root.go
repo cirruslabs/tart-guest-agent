@@ -188,6 +188,9 @@ func runVdagentOnce(ctx context.Context) error {
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
+		if !runDaemon && !runAgent {
+			return err
+		}
 		return nil
 	}
 	defer vdAgent.Close()
