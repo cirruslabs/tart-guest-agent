@@ -333,6 +333,24 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 					if len(types) == 0 {
 						if hadContent {
+							releaseMsg := vd.VDAgentClipboardRelease{
+								Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
+							}
+							releaseBytes, err := releaseMsg.Encode()
+							if err != nil {
+								if gCtx.Err() != nil {
+									return gCtx.Err()
+								}
+								return fmt.Errorf("failed to encode clipboard release: %w", err)
+							}
+							zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
+							if err := agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes); err != nil {
+								if gCtx.Err() != nil {
+									return gCtx.Err()
+								}
+								return fmt.Errorf("failed to write clipboard release: %w", err)
+							}
+
 							agent.clipMu.Lock()
 							agent.lastClipboardState = nil
 							agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
@@ -340,15 +358,6 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							agent.isHostOwned = false
 							agent.lastOptimizedImage = nil
 							agent.clipMu.Unlock()
-
-							releaseMsg := vd.VDAgentClipboardRelease{
-								Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
-							}
-							releaseBytes, err := releaseMsg.Encode()
-							if err == nil {
-								zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
-								_ = agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes)
-							}
 						}
 						continue
 					}
@@ -360,20 +369,29 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 
 					// If advertised formats changed or local content changed, send fresh grab
 					if (!isHost && !sameTypes) || (textChanged && lastTextValid) || (imageChanged && lastImageValid) {
-						agent.clipMu.Lock()
-						agent.lastAdvertisedTypes = types
-						agent.isHostOwned = false
-						agent.clipMu.Unlock()
-
 						ourGrab := vd.VDAgentClipboardGrab{
 							Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
 							Types:     types,
 						}
 						ourGrabBytes, err := ourGrab.Encode()
-						if err == nil {
-							zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (types=%v)", types)
-							_ = agent.writeMessage(vd.VD_AGENT_CLIPBOARD_GRAB, ourGrabBytes)
+						if err != nil {
+							if gCtx.Err() != nil {
+								return gCtx.Err()
+							}
+							return fmt.Errorf("failed to encode clipboard grab: %w", err)
 						}
+						zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (types=%v)", types)
+						if err := agent.writeMessage(vd.VD_AGENT_CLIPBOARD_GRAB, ourGrabBytes); err != nil {
+							if gCtx.Err() != nil {
+								return gCtx.Err()
+							}
+							return fmt.Errorf("failed to write clipboard grab: %w", err)
+						}
+
+						agent.clipMu.Lock()
+						agent.lastAdvertisedTypes = types
+						agent.isHostOwned = false
+						agent.clipMu.Unlock()
 					}
 
 				case textData, ok := <-textCh:
