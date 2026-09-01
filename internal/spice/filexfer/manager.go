@@ -194,7 +194,7 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 	}
 
 	// Reject chunk before writing if it would cause received bytes to exceed total advertised size
-	if task.bytesRcvd+uint64(len(msg.Data)) > task.totalSize {
+	if task.totalSize > 0 && task.bytesRcvd+uint64(len(msg.Data)) > task.totalSize {
 		zap.S().Errorf("filexfer: task id=%d chunk (%d bytes) exceeds total advertised size (%d bytes, received %d bytes)",
 			task.id, len(msg.Data), task.totalSize, task.bytesRcvd)
 		_ = task.file.Close()
@@ -221,7 +221,7 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 	task.bytesRcvd += uint64(n)
 
 	// If totalSize was reached
-	if task.bytesRcvd >= task.totalSize {
+	if task.totalSize > 0 && task.bytesRcvd >= task.totalSize {
 		return m.finishTask(task)
 	}
 
@@ -249,7 +249,7 @@ func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, boo
 		}, false, err
 	}
 
-	if task.bytesRcvd != task.totalSize {
+	if task.totalSize > 0 && task.bytesRcvd != task.totalSize {
 		zap.S().Errorf("filexfer: size mismatch for %s: expected %d bytes, received %d bytes",
 			task.targetPath, task.totalSize, task.bytesRcvd)
 		_ = os.Remove(task.targetPath)
@@ -297,7 +297,6 @@ func parseMetadata(data []byte) (string, uint64, error) {
 	str := string(bytes.TrimRight(data, "\x00"))
 	var fileName string
 	var fileSize uint64
-	var hasSize bool
 
 	lines := strings.Split(str, "\n")
 	for _, line := range lines {
@@ -311,17 +310,12 @@ func parseMetadata(data []byte) (string, uint64, error) {
 				return "", 0, fmt.Errorf("invalid file size %q: %w", val, err)
 			}
 			fileSize = s
-			hasSize = true
 		}
 	}
 
 	// Fallback: If no INI key-value format was used, check if it is a bare filename
 	if fileName == "" && len(str) > 0 && !strings.Contains(str, "[") {
 		fileName = strings.TrimSpace(lines[0])
-	}
-
-	if !hasSize {
-		return "", 0, fmt.Errorf("missing required 'size=' in transfer metadata")
 	}
 
 	return fileName, fileSize, nil

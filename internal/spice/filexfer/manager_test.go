@@ -271,14 +271,34 @@ func TestFileXferManager_MissingSize(t *testing.T) {
 	mgr.SetDownloadDir(tempDir)
 	defer mgr.Close()
 
-	// Missing size field
+	// Standard payload without size field (bare filename or name=)
 	startStatus, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
 		ID:   103,
-		Data: []byte("name=missing_size.bin\n"),
+		Data: []byte("name=standard_file.bin\n"),
 	})
-	assert.Error(t, err)
-	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), startStatus.Result)
-	assert.NoFileExists(t, filepath.Join(tempDir, "missing_size.bin"))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus.Result)
+	assert.FileExists(t, filepath.Join(tempDir, "standard_file.bin"))
+
+	// Data chunk followed by 0-byte EOF chunk
+	dataChunk := []byte("hello stream")
+	_, completed1, err := mgr.HandleData(&vd.VDAgentFileXferData{
+		ID:   103,
+		Size: uint64(len(dataChunk)),
+		Data: dataChunk,
+	})
+	require.NoError(t, err)
+	assert.False(t, completed1)
+
+	statusEOF, completedEOF, err := mgr.HandleData(&vd.VDAgentFileXferData{
+		ID:   103,
+		Size: 0,
+		Data: []byte{},
+	})
+	require.NoError(t, err)
+	assert.True(t, completedEOF)
+	assert.NotNil(t, statusEOF)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS), statusEOF.Result)
 }
 
 func TestFileXferManager_OversizedChunk(t *testing.T) {
