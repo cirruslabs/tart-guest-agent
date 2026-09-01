@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -59,6 +60,59 @@ func FindSerialPortPath() string {
 		}
 	}
 	return "/dev/tty.com.redhat.spice.0"
+}
+
+// ClipboardManagerInfo represents a detected running clipboard manager.
+type ClipboardManagerInfo struct {
+	Name        string
+	ProcessName string
+	Description string
+	PIDs        []string
+}
+
+// KnownClipboardManagers defines known third-party clipboard managers that can interfere with SPICE synchronization.
+var KnownClipboardManagers = []struct {
+	Name        string
+	ProcessName string
+	Description string
+}{
+	{Name: "Diodon", ProcessName: "diodon", Description: "GTK+ clipboard manager"},
+	{Name: "CopyQ", ProcessName: "copyq", Description: "Advanced clipboard manager with history"},
+	{Name: "GPaste", ProcessName: "gpaste-daemon", Description: "GNOME clipboard management daemon"},
+	{Name: "GPaste", ProcessName: "gpaste", Description: "GNOME clipboard management tool"},
+	{Name: "Parcellite", ProcessName: "parcellite", Description: "Lightweight GTK+ clipboard manager"},
+	{Name: "ClipIt", ProcessName: "clipit", Description: "Lightweight GTK+ clipboard manager"},
+	{Name: "XFCE Clipman", ProcessName: "xfce4-clipman", Description: "XFCE clipboard manager plugin"},
+	{Name: "Greenclip", ProcessName: "greenclip", Description: "Rofi/Dmenu clipboard daemon"},
+	{Name: "Clipman", ProcessName: "clipman", Description: "Wayland clipboard manager"},
+	{Name: "Clipster", ProcessName: "clipster", Description: "Python clipboard manager"},
+	{Name: "Klipper", ProcessName: "klipper", Description: "KDE clipboard tool"},
+	{Name: "wl-clip-persist", ProcessName: "wl-clip-persist", Description: "Wayland clipboard persistence tool"},
+}
+
+// FindRunningClipboardManagers scans for active third-party clipboard manager processes.
+func FindRunningClipboardManagers() []ClipboardManagerInfo {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		return nil
+	}
+
+	var found []ClipboardManagerInfo
+	for _, mgr := range KnownClipboardManagers {
+		cmd := exec.Command("pgrep", "-x", mgr.ProcessName)
+		out, err := cmd.Output()
+		if err == nil {
+			pids := strings.Fields(string(out))
+			if len(pids) > 0 {
+				found = append(found, ClipboardManagerInfo{
+					Name:        mgr.Name,
+					ProcessName: mgr.ProcessName,
+					Description: mgr.Description,
+					PIDs:        pids,
+				})
+			}
+		}
+	}
+	return found
 }
 
 type VDAgent struct {
@@ -166,6 +220,11 @@ func (agent *VDAgent) sendCapabilities(request uint32) error {
 }
 
 func (agent *VDAgent) Run(ctx context.Context) error {
+	// Warn if third-party clipboard managers are active
+	for _, mgr := range FindRunningClipboardManagers() {
+		zap.S().Warnf("detected active clipboard manager '%s' (PID %s); third-party clipboard managers can cause grab echo loops or overwrite synchronized clipboard contents", mgr.Name, strings.Join(mgr.PIDs, ", "))
+	}
+
 	// Send initial capability announcement immediately on startup
 	if err := agent.sendCapabilities(1); err != nil {
 		return fmt.Errorf("failed to send initial capabilities: %w", err)

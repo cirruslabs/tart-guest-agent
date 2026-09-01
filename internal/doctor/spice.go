@@ -110,6 +110,23 @@ func CheckConflictingDaemons() CheckResult {
 		return res
 	}
 
+	// Check for third-party clipboard managers (Diodon, CopyQ, GPaste, etc.)
+	if managers := vdagent.FindRunningClipboardManagers(); len(managers) > 0 {
+		var names []string
+		var details []string
+		var remedies []string
+		for _, m := range managers {
+			names = append(names, m.Name)
+			details = append(details, fmt.Sprintf("• %s (%s, PID: %s): %s", m.Name, m.ProcessName, strings.Join(m.PIDs, ", "), m.Description))
+			remedies = append(remedies, fmt.Sprintf("pkill -x %s", m.ProcessName))
+		}
+		res.Status = StatusWarn
+		res.Summary = fmt.Sprintf("clipboard manager(s) detected: %s (may cause sync loops or clipboard conflicts)", strings.Join(names, ", "))
+		res.Details = fmt.Sprintf("Running clipboard managers:\n%s\n\nClipboard managers aggressively monitor and claim clipboard ownership upon changes, which can interfere with host/guest SPICE clipboard synchronization.", strings.Join(details, "\n"))
+		res.Remediation = fmt.Sprintf("If you experience unexpected clipboard overwrites, grab loops, or sync issues, stop or disable the clipboard manager: '%s'", strings.Join(remedies, " && "))
+		return res
+	}
+
 	res.Status = StatusOK
 	res.Summary = "No conflicting daemons running"
 	return res

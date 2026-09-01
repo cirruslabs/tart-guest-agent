@@ -230,3 +230,19 @@ func TestHasServableClipboardFormat(t *testing.T) {
 		t.Fatalf("expected custom format + FmtText to return true")
 	}
 }
+
+func TestFindRunningClipboardManagers(t *testing.T) {
+	// Must run without panicking and return a slice
+	managers := FindRunningClipboardManagers()
+	_ = managers
+
+	// Validate known managers definitions
+	if len(KnownClipboardManagers) == 0 {
+		t.Fatalf("expected non-empty KnownClipboardManagers list")
+	}
+	for _, mgr := range KnownClipboardManagers {
+		if mgr.Name == "" || mgr.ProcessName == "" || mgr.Description == "" {
+			t.Fatalf("invalid KnownClipboardManager entry: %+v", mgr)
+		}
+	}
+}
