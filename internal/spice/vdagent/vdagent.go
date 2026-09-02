@@ -142,16 +142,17 @@ func New() (*VDAgent, error) {
 		return nil, err
 	}
 
+	clipEnabled := true
 	if err := clipboard.Init(); err != nil {
-		_ = sp.Close()
-		return nil, fmt.Errorf("clipboard initialization failed: %w", err)
+		zap.S().Warnf("clipboard initialization failed: %v; running with clipboard disabled (file transfer remains active)", err)
+		clipEnabled = false
 	}
 
 	return &VDAgent{
 		serialPort:       sp,
 		vdi:              vdi.New(sp),
 		fileXferMgr:      filexfer.NewManager(),
-		clipboardEnabled: true,
+		clipboardEnabled: clipEnabled,
 	}, nil
 }
 

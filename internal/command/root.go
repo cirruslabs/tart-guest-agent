@@ -155,6 +155,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	if !resizeDisk && !runVdagent && !runRPC && !runTray {
+		if runDaemon {
+			zap.S().Infof("daemon: auto-resize is disabled and no other components are requested; exiting cleanly")
+			return nil
+		}
 		return fmt.Errorf("at least one component must be enabled")
 	}
 
