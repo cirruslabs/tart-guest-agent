@@ -12,7 +12,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/cirruslabs/tart-guest-agent/internal/execuser"
 	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 	"github.com/creack/pty"
 	"github.com/google/uuid"
