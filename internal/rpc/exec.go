@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/cirruslabs/tart-guest-agent/internal/execuser"
+	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 	"github.com/creack/pty"
 	"github.com/google/uuid"
 	"github.com/samber/lo"
@@ -35,13 +36,14 @@ const (
 	signalExitCodeOffset = 128
 )
 
-func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
+//nolint:gocognit,gocyclo,maintidx // Exec coordinates process startup, bidirectional I/O, and cleanup.
+func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResponse]) error {
 	// Read the first exec request, it should describe a command to execute
 	firstExecRequest, err := stream.Recv()
 	if err != nil {
 		return err
 	}
-	firstExecRequestCommand, ok := firstExecRequest.Type.(*ExecRequest_Command_)
+	firstExecRequestCommand, ok := firstExecRequest.GetType().(*v1.ExecRequest_Command_)
 	if !ok {
 		return fmt.Errorf("first exec request should describe a command to execute")
 	}
@@ -96,9 +98,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			return err
 		}
 
-		if err := stream.Send(&ExecResponse{
-			Type: &ExecResponse_Exit_{
-				Exit: &ExecResponse_Exit{
+		if err := stream.Send(&v1.ExecResponse{
+			Type: &v1.ExecResponse_Exit_{
+				Exit: &v1.ExecResponse_Exit{
 					Code: 0,
 				},
 			},
@@ -209,7 +211,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 			}
 
 			switch typedAction := request.Type.(type) {
-			case *ExecRequest_StandardInput:
+			case *v1.ExecRequest_StandardInput:
 				if !firstExecRequestCommand.Command.Interactive {
 					// Ignore standard input from the client
 					// as non-interactive command is running
@@ -232,7 +234,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 
 					return
 				}
-			case *ExecRequest_TerminalResize:
+			case *v1.ExecRequest_TerminalResize:
 				// Ignore terminal resize requests
 				// when pseudo terminal is disabled
 				if !firstExecRequestCommand.Command.Tty {
@@ -254,7 +256,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 	// Serialize responses from the stdout and stderr goroutines
 	var sendMutex sync.Mutex
 
-	sendResponse := func(response *ExecResponse) error {
+	sendResponse := func(response *v1.ExecResponse) error {
 		sendMutex.Lock()
 		defer sendMutex.Unlock()
 
@@ -282,9 +284,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 				return err
 			}
 
-			if err := sendResponse(&ExecResponse{
-				Type: &ExecResponse_StandardOutput{
-					StandardOutput: &IOChunk{
+			if err := sendResponse(&v1.ExecResponse{
+				Type: &v1.ExecResponse_StandardOutput{
+					StandardOutput: &v1.IOChunk{
 						Data: slices.Clone(buf[:n]),
 					},
 				},
@@ -312,9 +314,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 					return err
 				}
 
-				if err := sendResponse(&ExecResponse{
-					Type: &ExecResponse_StandardError{
-						StandardError: &IOChunk{
+				if err := sendResponse(&v1.ExecResponse{
+					Type: &v1.ExecResponse_StandardError{
+						StandardError: &v1.IOChunk{
 							Data: slices.Clone(buf[:n]),
 						},
 					},
@@ -358,9 +360,9 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse])
 		}
 	}
 
-	return stream.Send(&ExecResponse{
-		Type: &ExecResponse_Exit_{
-			Exit: &ExecResponse_Exit{
+	return stream.Send(&v1.ExecResponse{
+		Type: &v1.ExecResponse_Exit_{
+			Exit: &v1.ExecResponse_Exit{
 				Code: int32(exitCode),
 			},
 		},
@@ -402,7 +404,7 @@ func closeStdin(stdin io.WriteCloser, tty bool, closed *bool) error {
 	return nil
 }
 
-func (rpc *RPC) Signal(_ context.Context, request *SignalRequest) (*emptypb.Empty, error) {
+func (rpc *RPC) Signal(_ context.Context, request *v1.SignalRequest) (*emptypb.Empty, error) {
 	process, ok := rpc.execs.Load(request.GetExecId())
 	if !ok {
 		return nil, fmt.Errorf("exec %q is not running", request.GetExecId())
@@ -411,9 +413,9 @@ func (rpc *RPC) Signal(_ context.Context, request *SignalRequest) (*emptypb.Empt
 	var signal syscall.Signal
 
 	switch request.GetSignal() {
-	case SignalRequest_SIGNAL_SIGTERM:
+	case v1.SignalRequest_SIGNAL_SIGTERM:
 		signal = syscall.SIGTERM
-	case SignalRequest_SIGNAL_SIGKILL:
+	case v1.SignalRequest_SIGNAL_SIGKILL:
 		signal = syscall.SIGKILL
 	default:
 		return nil, fmt.Errorf("unsupported exec signal %q", request.GetSignal().String())
@@ -431,27 +433,27 @@ func (rpc *RPC) Signal(_ context.Context, request *SignalRequest) (*emptypb.Empt
 	return &emptypb.Empty{}, nil
 }
 
-func sendStartSuccess(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse], execID string) error {
-	return stream.Send(&ExecResponse{
-		Type: &ExecResponse_Started_{
-			Started: &ExecResponse_Started{
+func sendStartSuccess(stream grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResponse], execID string) error {
+	return stream.Send(&v1.ExecResponse{
+		Type: &v1.ExecResponse_Started_{
+			Started: &v1.ExecResponse_Started{
 				ExecId: execID,
 			},
 		},
 	})
 }
 
-func sendStartFailure(stream grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
-	return stream.Send(&ExecResponse{
-		Type: &ExecResponse_Exit_{
-			Exit: &ExecResponse_Exit{
+func sendStartFailure(stream grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResponse]) error {
+	return stream.Send(&v1.ExecResponse{
+		Type: &v1.ExecResponse_Exit_{
+			Exit: &v1.ExecResponse_Exit{
 				Code: execRuntimeFailureExitCode,
 			},
 		},
 	})
 }
 
-func applyExecOverrides(cmd *exec.Cmd, command *ExecRequest_Command) error {
+func applyExecOverrides(cmd *exec.Cmd, command *v1.ExecRequest_Command) error {
 	if command.Workdir != "" {
 		cmd.Dir = command.Workdir
 	}
