@@ -252,3 +252,59 @@ func TestFindRunningClipboardManagers(t *testing.T) {
 		}
 	}
 }
+
+type failingWriter struct{}
+
+func (f *failingWriter) Write(p []byte) (n int, err error) {
+	return 0, io.ErrClosedPipe
+}
+
+func (f *failingWriter) Read(p []byte) (n int, err error) {
+	return 0, io.EOF
+}
+
+func TestProcessClipboardState_WriteFailureDoesNotCorruptState(t *testing.T) {
+	agent := &VDAgent{
+		vdi: vdi.New(&failingWriter{}),
+	}
+
+	text := []byte("hello world")
+	err := agent.processClipboardState(text, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+	if err == nil {
+		t.Fatalf("expected error from failing writer")
+	}
+
+	agent.clipMu.Lock()
+	defer agent.clipMu.Unlock()
+
+	// Memory state must remain uncommitted if writeMessage fails
+	if agent.lastClipboardState != nil {
+		t.Fatalf("expected lastClipboardState to remain nil on write failure, got %q", agent.lastClipboardState)
+	}
+	if agent.lastAdvertisedTypes != nil {
+		t.Fatalf("expected lastAdvertisedTypes to remain nil on write failure, got %v", agent.lastAdvertisedTypes)
+	}
+}
+
+func TestProcessClipboardState_SuccessfulWriteCommitsState(t *testing.T) {
+	var buf bytes.Buffer
+	agent := &VDAgent{
+		vdi: vdi.New(&buf),
+	}
+
+	text := []byte("test grab")
+	err := agent.processClipboardState(text, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+	if err != nil {
+		t.Fatalf("processClipboardState failed: %v", err)
+	}
+
+	agent.clipMu.Lock()
+	defer agent.clipMu.Unlock()
+
+	if !bytes.Equal(agent.lastClipboardState, text) {
+		t.Fatalf("expected lastClipboardState to be %q, got %q", text, agent.lastClipboardState)
+	}
+	if len(agent.lastAdvertisedTypes) == 0 {
+		t.Fatalf("expected lastAdvertisedTypes to be non-empty")
+	}
+}

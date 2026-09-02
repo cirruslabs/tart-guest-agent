@@ -80,13 +80,18 @@ func ShowNotificationsPanel() error {
 		}
 		return err
 	case "linux":
-		if path, err := exec.LookPath("zenity"); err == nil {
-			return exec.Command(path, "--info", "--title=Tart Guest Agent — Notifications", "--text="+text, "--width=480", "--height=320").Run()
+		if path, err := exec.LookPath("zenity"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
+			if err := exec.Command(path, "--info", "--title=Tart Guest Agent — Notifications", "--text="+text, "--width=480", "--height=320").Run(); err == nil {
+				return nil
+			}
 		}
-		if path, err := exec.LookPath("kdialog"); err == nil {
-			return exec.Command(path, "--title", "Tart Guest Agent — Notifications", "--msgbox", text).Run()
+		if path, err := exec.LookPath("kdialog"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
+			if err := exec.Command(path, "--title", "Tart Guest Agent — Notifications", "--msgbox", text).Run(); err == nil {
+				return nil
+			}
 		}
 		fmt.Println(text)
+		return nil
 	}
 	return nil
 }
@@ -147,12 +152,25 @@ func ShowSettingsDialog() error {
 		return nil
 
 	case "linux":
-		if path, err := exec.LookPath("zenity"); err == nil {
+		if path, err := exec.LookPath("zenity"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
 			summary := fmt.Sprintf("Current Settings:\nNotifications: %v\nImage Clipboard: %v\nFile Transfer: %v\nDownloads: %s",
 				s.NotificationsEnabled, s.ImageClipboardEnabled, s.FileTransferEnabled, s.DownloadDir)
-			return exec.Command(path, "--info", "--title=Tart Guest Agent — Settings", "--text="+summary).Run()
+			if err := exec.Command(path, "--info", "--title=Tart Guest Agent — Settings", "--text="+summary).Run(); err == nil {
+				return nil
+			}
 		}
-		fmt.Printf("Current Settings: %+v\n", s)
+		fmt.Printf("=== Tart Guest Agent Settings ===\n\n"+
+			"• Desktop Notifications: %s\n"+
+			"• Image Clipboard Sync: %s\n"+
+			"• File Transfer Daemon: %s\n"+
+			"• Auto Disk Resizing: %s\n"+
+			"• Downloads Folder: %s\n",
+			boolStatus(s.NotificationsEnabled),
+			boolStatus(s.ImageClipboardEnabled),
+			boolStatus(s.FileTransferEnabled),
+			boolStatus(s.AutoResizeEnabled),
+			s.DownloadDir,
+		)
 	}
 	return nil
 }
@@ -168,9 +186,13 @@ func ShowDoctorDialog(reportText string, overall string) error {
 		script := fmt.Sprintf(`display dialog "%s" with title "Tart Guest Agent — Diagnostics" buttons {"OK"} default button "OK" with icon note`, escaped)
 		return exec.Command("osascript", "-e", script).Run()
 	case "linux":
-		if path, err := exec.LookPath("zenity"); err == nil {
-			return exec.Command(path, "--info", "--title=Tart Guest Agent — Diagnostics", "--text="+reportText, "--width=480", "--height=340").Run()
+		if path, err := exec.LookPath("zenity"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
+			if err := exec.Command(path, "--info", "--title=Tart Guest Agent — Diagnostics", "--text="+reportText, "--width=480", "--height=340").Run(); err == nil {
+				return nil
+			}
 		}
+		fmt.Println(reportText)
+		return nil
 	}
 	fmt.Println(reportText)
 	return nil
