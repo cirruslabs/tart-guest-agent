@@ -59,6 +59,15 @@ func categoryIcon(cat activity.Category, status string) string {
 	}
 }
 
+// EscapeAppleScriptString escapes backslashes, quotes, and newlines for safe AppleScript string interpolation.
+func EscapeAppleScriptString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
+}
+
 // ShowNotificationsPanel displays the interactive notifications dialog.
 func ShowNotificationsPanel() error {
 	events := activity.List()
@@ -66,8 +75,7 @@ func ShowNotificationsPanel() error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		escaped := strings.ReplaceAll(text, "\"", "\\\"")
-		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+		escaped := EscapeAppleScriptString(text)
 		script := fmt.Sprintf(`display dialog "%s" with title "Tart Guest Agent — Notifications" buttons {"Clear History", "Open Downloads", "OK"} default button "OK" with icon note`, escaped)
 		out, err := exec.Command("osascript", "-e", script).Output()
 		if err == nil {
@@ -116,8 +124,7 @@ func ShowSettingsDialog() error {
 			boolStatus(s.AutoResizeEnabled),
 			s.DownloadDir,
 		)
-		escaped := strings.ReplaceAll(currentSummary, "\"", "\\\"")
-		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+		escaped := EscapeAppleScriptString(currentSummary)
 
 		script := fmt.Sprintf(`choose from list {"Toggle Notifications (%s)", "Toggle Image Clipboard (%s)", "Toggle File Transfer (%s)", "Toggle Auto Disk Resize (%s)", "Reset to Defaults"} with title "Tart Guest Agent — Settings" with prompt "%s" OK button name "Toggle" cancel button name "Close"`,
 			toggleAction(s.NotificationsEnabled),
@@ -148,16 +155,72 @@ func ShowSettingsDialog() error {
 		if err := settings.Save(s); err != nil {
 			return err
 		}
-		activity.Record(activity.CategorySystem, "Settings updated", fmt.Sprintf("Notifications: %v, Images: %v, FileXfer: %v", s.NotificationsEnabled, s.ImageClipboardEnabled, s.FileTransferEnabled), "info")
+		activity.Record(activity.CategorySystem, "Settings updated", fmt.Sprintf("Notifications: %v, Images: %v, FileXfer: %v, AutoResize: %v", s.NotificationsEnabled, s.ImageClipboardEnabled, s.FileTransferEnabled, s.AutoResizeEnabled), "info")
 		return nil
 
 	case "linux":
 		if path, err := exec.LookPath("zenity"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
-			summary := fmt.Sprintf("Current Settings:\nNotifications: %v\nImage Clipboard: %v\nFile Transfer: %v\nDownloads: %s",
-				s.NotificationsEnabled, s.ImageClipboardEnabled, s.FileTransferEnabled, s.DownloadDir)
-			if err := exec.Command(path, "--info", "--title=Tart Guest Agent — Settings", "--text="+summary).Run(); err == nil {
+			cmd := exec.Command(path, "--list", "--title=Tart Guest Agent — Settings",
+				"--text=Select a setting to toggle:",
+				"--column=Action",
+				fmt.Sprintf("Toggle Desktop Notifications (%s)", toggleAction(s.NotificationsEnabled)),
+				fmt.Sprintf("Toggle Image Clipboard (%s)", toggleAction(s.ImageClipboardEnabled)),
+				fmt.Sprintf("Toggle File Transfer (%s)", toggleAction(s.FileTransferEnabled)),
+				fmt.Sprintf("Toggle Auto Disk Resize (%s)", toggleAction(s.AutoResizeEnabled)),
+				"Reset to Defaults",
+			)
+			out, err := cmd.Output()
+			if err == nil {
+				choice := strings.TrimSpace(string(out))
+				if strings.Contains(choice, "Notifications") {
+					s.NotificationsEnabled = !s.NotificationsEnabled
+				} else if strings.Contains(choice, "Image Clipboard") {
+					s.ImageClipboardEnabled = !s.ImageClipboardEnabled
+				} else if strings.Contains(choice, "File Transfer") {
+					s.FileTransferEnabled = !s.FileTransferEnabled
+				} else if strings.Contains(choice, "Auto Disk Resize") {
+					s.AutoResizeEnabled = !s.AutoResizeEnabled
+				} else if strings.Contains(choice, "Reset to Defaults") {
+					s = settings.DefaultSettings()
+				}
+				if err := settings.Save(s); err != nil {
+					return err
+				}
+				activity.Record(activity.CategorySystem, "Settings updated", fmt.Sprintf("Notifications: %v, Images: %v, FileXfer: %v, AutoResize: %v", s.NotificationsEnabled, s.ImageClipboardEnabled, s.FileTransferEnabled, s.AutoResizeEnabled), "info")
 				return nil
 			}
+			return nil
+		}
+		if path, err := exec.LookPath("kdialog"); err == nil && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
+			cmd := exec.Command(path, "--menu", "Select a setting to toggle:",
+				"1", fmt.Sprintf("Toggle Desktop Notifications (%s)", toggleAction(s.NotificationsEnabled)),
+				"2", fmt.Sprintf("Toggle Image Clipboard (%s)", toggleAction(s.ImageClipboardEnabled)),
+				"3", fmt.Sprintf("Toggle File Transfer (%s)", toggleAction(s.FileTransferEnabled)),
+				"4", fmt.Sprintf("Toggle Auto Disk Resize (%s)", toggleAction(s.AutoResizeEnabled)),
+				"5", "Reset to Defaults",
+			)
+			out, err := cmd.Output()
+			if err == nil {
+				choice := strings.TrimSpace(string(out))
+				switch choice {
+				case "1":
+					s.NotificationsEnabled = !s.NotificationsEnabled
+				case "2":
+					s.ImageClipboardEnabled = !s.ImageClipboardEnabled
+				case "3":
+					s.FileTransferEnabled = !s.FileTransferEnabled
+				case "4":
+					s.AutoResizeEnabled = !s.AutoResizeEnabled
+				case "5":
+					s = settings.DefaultSettings()
+				}
+				if err := settings.Save(s); err != nil {
+					return err
+				}
+				activity.Record(activity.CategorySystem, "Settings updated", fmt.Sprintf("Notifications: %v, Images: %v, FileXfer: %v, AutoResize: %v", s.NotificationsEnabled, s.ImageClipboardEnabled, s.FileTransferEnabled, s.AutoResizeEnabled), "info")
+				return nil
+			}
+			return nil
 		}
 		fmt.Printf("=== Tart Guest Agent Settings ===\n\n"+
 			"• Desktop Notifications: %s\n"+
@@ -181,8 +244,7 @@ func ShowDoctorDialog(reportText string, overall string) error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		escaped := strings.ReplaceAll(reportText, "\"", "\\\"")
-		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+		escaped := EscapeAppleScriptString(reportText)
 		script := fmt.Sprintf(`display dialog "%s" with title "Tart Guest Agent — Diagnostics" buttons {"OK"} default button "OK" with icon note`, escaped)
 		return exec.Command("osascript", "-e", script).Run()
 	case "linux":

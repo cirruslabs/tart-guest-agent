@@ -46,3 +46,14 @@ func TestCategoryIcons(t *testing.T) {
 	assert.Equal(t, "❌", categoryIcon(activity.CategorySystem, "error"))
 	assert.Equal(t, "⚠️", categoryIcon(activity.CategorySystem, "warning"))
 }
+
+func TestEscapeAppleScriptString(t *testing.T) {
+	// A hostile filename containing backslash before quote must escape backslash first
+	input := `malicious\" filename \ with "quotes" and \n newlines`
+	escaped := EscapeAppleScriptString(input)
+
+	// \" in original must become \\\" so AppleScript parses it as literal backslash followed by escaped quote
+	assert.Contains(t, escaped, `malicious\\\"`)
+	assert.Contains(t, escaped, `\"quotes\"`)
+	assert.Contains(t, escaped, `\\ with`)
+}

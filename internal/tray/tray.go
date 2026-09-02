@@ -105,6 +105,18 @@ func (t *Tray) HandleAction(action string) error {
 	}
 }
 
+// actionCh provides an action-dispatch queue to the active tray controller.
+var actionCh = make(chan string, 16)
+
+// Dispatch sends an action to the running tray controller event loop.
+func Dispatch(action string) {
+	select {
+	case actionCh <- action:
+	default:
+		zap.S().Warnf("tray: action queue full, dropped action: %s", action)
+	}
+}
+
 // Run starts the tray controller and listens for context cancellation.
 func (t *Tray) Run(ctx context.Context) error {
 	zap.S().Infof("Starting Tart Guest Agent tray service (version %s)", version.Version)
@@ -117,11 +129,17 @@ func (t *Tray) Run(ctx context.Context) error {
 
 	activity.Record(activity.CategorySystem, "Tart Guest Agent started", fmt.Sprintf("Version %s", version.Version), "success")
 
-	// Run platform-specific tray loop or monitor context
-	select {
-	case <-ctx.Done():
-		zap.S().Infof("Stopping Tart Guest Agent tray service")
-		return ctx.Err()
+	// Run tray action-dispatch and lifecycle event loop
+	for {
+		select {
+		case <-ctx.Done():
+			zap.S().Infof("Stopping Tart Guest Agent tray service")
+			return ctx.Err()
+		case act := <-actionCh:
+			if err := t.HandleAction(act); err != nil {
+				zap.S().Warnf("tray: error handling action %q: %v", act, err)
+			}
+		}
 	}
 }
 

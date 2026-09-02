@@ -75,10 +75,14 @@ func NewRootCommand() *cobra.Command {
 
 	// Tray subcommand
 	trayCmd := &cobra.Command{
-		Use:   "tray",
-		Short: "Run guest agent system tray / status bar service",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return tray.New().Run(cmd.Context())
+		Use:   "tray [action]",
+		Short: "Run guest agent system tray / status bar service, or dispatch an action",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t := tray.New()
+			if len(args) > 0 {
+				return t.HandleAction(args[0])
+			}
+			return t.Run(cmd.Context())
 		},
 	}
 	cmd.AddCommand(trayCmd)

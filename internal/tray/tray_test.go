@@ -49,3 +49,18 @@ func TestNotificationEmitters(t *testing.T) {
 	EmitClipboardSyncNotification("PNG", 1024)
 	EmitFileTransferNotification("test.txt", 42)
 }
+
+func TestTrayDispatch(t *testing.T) {
+	tray := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = tray.Run(ctx)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	// Dispatch known action
+	Dispatch("downloads")
+	time.Sleep(10 * time.Millisecond)
+}
