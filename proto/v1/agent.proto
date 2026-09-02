@@ -2,7 +2,7 @@ syntax = "proto3";
 
 import "google/protobuf/empty.proto";
 
-option go_package = "github.com/cirruslabs/tart-guest-agent/internal/rpc";
+option go_package = "github.com/cirruslabs/tart-guest-agent/pkg/v1";
 
 service Agent {
   rpc Exec(stream ExecRequest) returns (stream ExecResponse);

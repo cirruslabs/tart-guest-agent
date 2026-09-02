@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -27,22 +28,22 @@ type execTestStream struct {
 	grpc.ServerStream
 
 	ctx       context.Context
-	requests  chan *ExecRequest
-	responses chan *ExecResponse
-	sendHook  func(*ExecResponse) error
+	requests  chan *v1.ExecRequest
+	responses chan *v1.ExecResponse
+	sendHook  func(*v1.ExecResponse) error
 }
 
-var _ grpc.BidiStreamingServer[ExecRequest, ExecResponse] = (*execTestStream)(nil)
+var _ grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResponse] = (*execTestStream)(nil)
 
 func newExecTestStream(ctx context.Context) *execTestStream {
 	return &execTestStream{
 		ctx:       ctx,
-		requests:  make(chan *ExecRequest, 8),
-		responses: make(chan *ExecResponse, 8),
+		requests:  make(chan *v1.ExecRequest, 8),
+		responses: make(chan *v1.ExecResponse, 8),
 	}
 }
 
-func (stream *execTestStream) Send(response *ExecResponse) error {
+func (stream *execTestStream) Send(response *v1.ExecResponse) error {
 	if stream.sendHook != nil {
 		if err := stream.sendHook(response); err != nil {
 			return err
@@ -57,7 +58,7 @@ func (stream *execTestStream) Send(response *ExecResponse) error {
 	}
 }
 
-func (stream *execTestStream) Recv() (*ExecRequest, error) {
+func (stream *execTestStream) Recv() (*v1.ExecRequest, error) {
 	select {
 	case request, ok := <-stream.requests:
 		if !ok {
@@ -72,7 +73,7 @@ func (stream *execTestStream) Recv() (*ExecRequest, error) {
 func (stream *execTestStream) Context() context.Context { return stream.ctx }
 
 func TestExecSendsStartedBeforeOutputAndExit(t *testing.T) {
-	_, stream, result := startExecTest(t, &ExecRequest_Command{
+	_, stream, result := startExecTest(t, &v1.ExecRequest_Command{
 		Name: execTestShell,
 		Args: []string{"-c", "printf hello"},
 	})
@@ -84,9 +85,9 @@ func TestExecSendsStartedBeforeOutputAndExit(t *testing.T) {
 	for {
 		response := receiveExecResponse(t, stream)
 		switch response := response.GetType().(type) {
-		case *ExecResponse_StandardOutput:
+		case *v1.ExecResponse_StandardOutput:
 			output = append(output, response.StandardOutput.GetData()...)
-		case *ExecResponse_Exit_:
+		case *v1.ExecResponse_Exit_:
 			require.EqualValues(t, 0, response.Exit.GetCode())
 			require.Equal(t, []byte("hello"), output)
 			require.NoError(t, receiveExecResult(t, result))
@@ -98,15 +99,15 @@ func TestExecSendsStartedBeforeOutputAndExit(t *testing.T) {
 }
 
 func TestExecClosesStandardInputOnRequestStreamEOF(t *testing.T) {
-	_, stream, result := startExecTest(t, &ExecRequest_Command{
+	_, stream, result := startExecTest(t, &v1.ExecRequest_Command{
 		Name:        "/bin/cat",
 		Interactive: true,
 	})
 	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
 
-	stream.requests <- &ExecRequest{
-		Type: &ExecRequest_StandardInput{
-			StandardInput: &IOChunk{Data: []byte("hello")},
+	stream.requests <- &v1.ExecRequest{
+		Type: &v1.ExecRequest_StandardInput{
+			StandardInput: &v1.IOChunk{Data: []byte("hello")},
 		},
 	}
 	close(stream.requests)
@@ -119,20 +120,20 @@ func TestExecClosesStandardInputOnRequestStreamEOF(t *testing.T) {
 }
 
 func TestExecClosesStandardInputOnEmptyChunk(t *testing.T) {
-	_, stream, result := startExecTest(t, &ExecRequest_Command{
+	_, stream, result := startExecTest(t, &v1.ExecRequest_Command{
 		Name:        "/bin/cat",
 		Interactive: true,
 	})
 	require.NotNil(t, receiveExecResponse(t, stream).GetStarted())
 
-	stream.requests <- &ExecRequest{
-		Type: &ExecRequest_StandardInput{
-			StandardInput: &IOChunk{Data: []byte("hello")},
+	stream.requests <- &v1.ExecRequest{
+		Type: &v1.ExecRequest_StandardInput{
+			StandardInput: &v1.IOChunk{Data: []byte("hello")},
 		},
 	}
-	stream.requests <- &ExecRequest{
-		Type: &ExecRequest_StandardInput{
-			StandardInput: &IOChunk{},
+	stream.requests <- &v1.ExecRequest{
+		Type: &v1.ExecRequest_StandardInput{
+			StandardInput: &v1.IOChunk{},
 		},
 	}
 
@@ -146,17 +147,17 @@ func TestExecClosesStandardInputOnEmptyChunk(t *testing.T) {
 func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 	tests := []struct {
 		name    string
-		command *ExecRequest_Command
+		command *v1.ExecRequest_Command
 	}{
 		{
 			name: "missing executable",
-			command: &ExecRequest_Command{
+			command: &v1.ExecRequest_Command{
 				Name: "/definitely/missing/tart-guest-agent-test-command",
 			},
 		},
 		{
 			name: "missing workdir",
-			command: &ExecRequest_Command{
+			command: &v1.ExecRequest_Command{
 				Name:    execTestShell,
 				Workdir: "/definitely/missing/tart-guest-agent-test-workdir",
 			},
@@ -177,46 +178,46 @@ func TestExecReportsStartFailureBeforeStarted(t *testing.T) {
 func TestExecSignalsProcess(t *testing.T) {
 	tests := []struct {
 		name   string
-		signal SignalRequest_Signal
+		signal v1.SignalRequest_Signal
 		code   int32
 		err    string
 	}{
 		{
 			name:   "SIGTERM",
-			signal: SignalRequest_SIGNAL_SIGTERM,
+			signal: v1.SignalRequest_SIGNAL_SIGTERM,
 			code:   int32(signalExitCodeOffset + syscall.SIGTERM),
 		},
 		{
 			name:   "SIGKILL",
-			signal: SignalRequest_SIGNAL_SIGKILL,
+			signal: v1.SignalRequest_SIGNAL_SIGKILL,
 			code:   int32(signalExitCodeOffset + syscall.SIGKILL),
 		},
 		{
 			name:   "unsupported",
-			signal: SignalRequest_SIGNAL_UNSPECIFIED,
+			signal: v1.SignalRequest_SIGNAL_UNSPECIFIED,
 			err:    `unsupported exec signal "SIGNAL_UNSPECIFIED"`,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			rpc, stream, result := startExecTest(t, &ExecRequest_Command{
+			rpc, stream, result := startExecTest(t, &v1.ExecRequest_Command{
 				Name: "/bin/sleep",
 				Args: []string{"30"},
 			})
 			started := receiveExecResponse(t, stream).GetStarted()
 			require.NotNil(t, started)
 
-			_, err := rpc.Signal(context.Background(), &SignalRequest{
+			_, err := rpc.Signal(context.Background(), &v1.SignalRequest{
 				ExecId: started.GetExecId(),
 				Signal: test.signal,
 			})
 
 			if test.err != "" {
 				require.EqualError(t, err, test.err)
-				_, err = rpc.Signal(context.Background(), &SignalRequest{
+				_, err = rpc.Signal(context.Background(), &v1.SignalRequest{
 					ExecId: started.GetExecId(),
-					Signal: SignalRequest_SIGNAL_SIGKILL,
+					Signal: v1.SignalRequest_SIGNAL_SIGKILL,
 				})
 				require.NoError(t, err)
 				receiveExecResponse(t, stream)
@@ -235,7 +236,7 @@ func TestExecSignalsProcess(t *testing.T) {
 }
 
 func TestExecSignalsProcessGroup(t *testing.T) {
-	rpc, stream, result := startExecTest(t, &ExecRequest_Command{
+	rpc, stream, result := startExecTest(t, &v1.ExecRequest_Command{
 		Name: execTestShell,
 		Args: []string{"-c", "sleep 30 & printf ready; wait"},
 	})
@@ -243,9 +244,9 @@ func TestExecSignalsProcessGroup(t *testing.T) {
 	require.NotNil(t, started)
 	require.Equal(t, []byte("ready"), receiveExecResponse(t, stream).GetStandardOutput().GetData())
 
-	_, err := rpc.Signal(context.Background(), &SignalRequest{
+	_, err := rpc.Signal(context.Background(), &v1.SignalRequest{
 		ExecId: started.GetExecId(),
-		Signal: SignalRequest_SIGNAL_SIGTERM,
+		Signal: v1.SignalRequest_SIGNAL_SIGTERM,
 	})
 	require.NoError(t, err)
 
@@ -259,12 +260,12 @@ func TestExecReapsProcessWhenStartedCannotBeSent(t *testing.T) {
 	sendErr := errors.New("failed to send Started")
 	var processPID int
 
-	_, _, result := startExecTest(t, &ExecRequest_Command{
+	_, _, result := startExecTest(t, &v1.ExecRequest_Command{
 		Name: execTestShell,
 		Args: []string{"-c", `printf %d "$$" > "$PID_FILE"; exec sleep 30`},
 		Env:  map[string]string{"PID_FILE": pidPath},
 	}, func(stream *execTestStream) {
-		stream.sendHook = func(response *ExecResponse) error {
+		stream.sendHook = func(response *v1.ExecResponse) error {
 			if response.GetStarted() == nil {
 				return nil
 			}
@@ -285,7 +286,7 @@ func TestExecReapsProcessWhenStartedCannotBeSent(t *testing.T) {
 
 func startExecTest(
 	t *testing.T,
-	command *ExecRequest_Command,
+	command *v1.ExecRequest_Command,
 	configure ...func(*execTestStream),
 ) (*RPC, *execTestStream, <-chan error) {
 	t.Helper()
@@ -302,13 +303,13 @@ func startExecTest(
 	go func() {
 		result <- rpc.Exec(stream)
 	}()
-	stream.requests <- &ExecRequest{
-		Type: &ExecRequest_Command_{Command: command},
+	stream.requests <- &v1.ExecRequest{
+		Type: &v1.ExecRequest_Command_{Command: command},
 	}
 	return rpc, stream, result
 }
 
-func receiveExecResponse(t *testing.T, stream *execTestStream) *ExecResponse {
+func receiveExecResponse(t *testing.T, stream *execTestStream) *v1.ExecResponse {
 	t.Helper()
 
 	select {

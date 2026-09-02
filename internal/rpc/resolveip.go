@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+
+	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 )
 
-func (rpc *RPC) ResolveIP(ctx context.Context, _ *ResolveIPRequest) (*ResolveIPResponse, error) {
+func (rpc *RPC) ResolveIP(ctx context.Context, _ *v1.ResolveIPRequest) (*v1.ResolveIPResponse, error) {
 	ifaceAddrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve VM's network interface addresses: %w", err)
@@ -33,7 +35,7 @@ func (rpc *RPC) ResolveIP(ctx context.Context, _ *ResolveIPRequest) (*ResolveIPR
 			continue
 		}
 
-		return &ResolveIPResponse{
+		return &v1.ResolveIPResponse{
 			Ip: ipNet.IP.String(),
 		}, nil
 	}

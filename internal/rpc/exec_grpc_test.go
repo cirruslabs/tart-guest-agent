@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -26,7 +27,7 @@ import (
 func TestExecGRPCBackgroundProcessLifetime(t *testing.T) {
 	for _, mode := range []string{"normal exit", "cancel after exit", "cancel while running"} {
 		t.Run(mode, func(t *testing.T) {
-			client := NewAgentClient(newExecGRPCTestConn(t))
+			client := v1.NewAgentClient(newExecGRPCTestConn(t))
 			ctx, cancel := context.WithTimeout(t.Context(), execTestTimeout)
 			defer cancel()
 
@@ -34,7 +35,7 @@ func TestExecGRPCBackgroundProcessLifetime(t *testing.T) {
 			require.NoError(t, err)
 
 			releasePath := filepath.Join(t.TempDir(), "release")
-			require.NoError(t, stream.Send(&ExecRequest{Type: &ExecRequest_Command_{Command: &ExecRequest_Command{
+			require.NoError(t, stream.Send(&v1.ExecRequest{Type: &v1.ExecRequest_Command_{Command: &v1.ExecRequest_Command{
 				Name: execTestShell,
 				Args: []string{"-c", `nohup sleep 30 >/dev/null 2>&1 </dev/null &
 echo "$!"

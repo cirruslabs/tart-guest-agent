@@ -5,16 +5,17 @@ import (
 	"net"
 	"os"
 
+	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 	"github.com/puzpuzpuz/xsync/v4"
 	"google.golang.org/grpc"
 )
 
 type RPC struct {
+	v1.UnimplementedAgentServer
+
 	grpcServer *grpc.Server
 	listener   net.Listener
 	execs      *xsync.Map[string, *os.Process]
-
-	UnimplementedAgentServer
 }
 
 func New(listener net.Listener) (*RPC, error) {
@@ -24,7 +25,7 @@ func New(listener net.Listener) (*RPC, error) {
 		execs:      xsync.NewMap[string, *os.Process](),
 	}
 
-	RegisterAgentServer(rpc.grpcServer, rpc)
+	v1.RegisterAgentServer(rpc.grpcServer, rpc)
 
 	return rpc, nil
 }
