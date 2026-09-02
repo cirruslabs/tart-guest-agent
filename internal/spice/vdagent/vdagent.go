@@ -281,10 +281,11 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 				case <-pollTicker.C:
 					formats := clipboard.Formats()
 					agent.clipMu.Lock()
-					hadContent := (agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0
+					hadContent := !agent.isHostOwned && ((agent.lastClipboardState != nil && len(agent.lastClipboardState) > 0) || len(agent.lastAdvertisedTypes) > 0)
+					initialGen := agent.clipGen
 					agent.clipMu.Unlock()
 
-					// If clipboard was emptied locally
+					// If guest clipboard was emptied locally
 					if len(formats) == 0 && hadContent {
 						releaseMsg := vd.VDAgentClipboardRelease{
 							Selection: vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
@@ -296,15 +297,27 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 							}
 							return fmt.Errorf("failed to encode clipboard release: %w", err)
 						}
+
+						agent.writeMu.Lock()
+						agent.clipMu.Lock()
+						if agent.clipGen != initialGen || agent.isHostOwned {
+							agent.clipMu.Unlock()
+							agent.writeMu.Unlock()
+							zap.S().Debugf("suppressing polling guest release emission; host ownership or newer clipboard event took precedence")
+							continue
+						}
+
 						zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
-						if err := agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes); err != nil {
+						if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes); err != nil {
+							agent.clipMu.Unlock()
+							agent.writeMu.Unlock()
 							if gCtx.Err() != nil {
 								return gCtx.Err()
 							}
 							return fmt.Errorf("failed to write clipboard release: %w", err)
 						}
 
-						agent.clipMu.Lock()
+						agent.clipGen++
 						agent.lastClipboardState = nil
 						agent.lastClipboardType = vd.VD_AGENT_CLIPBOARD_NONE
 						agent.lastAdvertisedTypes = nil
@@ -314,6 +327,7 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						agent.selfImageWritePending = false
 						agent.selfTextWritePending = false
 						agent.clipMu.Unlock()
+						agent.writeMu.Unlock()
 					}
 				}
 			}
