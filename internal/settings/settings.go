@@ -124,3 +124,10 @@ func Get() *Settings {
 	cp := *s
 	return &cp
 }
+
+// Reset clears cached settings in memory and forces re-evaluation on next access.
+func Reset() {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	currentSettings = nil
+}

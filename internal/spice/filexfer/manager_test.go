@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cirruslabs/tart-guest-agent/internal/settings"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/stretchr/testify/assert"
@@ -338,9 +339,105 @@ func TestDefaultDownloadDir(t *testing.T) {
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", oldHome)
 
+	settings.Reset()
+	defer settings.Reset()
+
 	dir := filexfer.DefaultDownloadDir()
 	assert.Equal(t, filepath.Join(tempHome, "Downloads"), dir)
 	assert.DirExists(t, dir)
+}
+
+func TestDefaultDownloadDir_ConfiguredSettingsFirst(t *testing.T) {
+	tempCustom, err := os.MkdirTemp("", "custom_dl_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempCustom)
+
+	tempCfg := filepath.Join(tempCustom, "settings.json")
+	oldCfg := os.Getenv("TART_GUEST_CONFIG")
+	os.Setenv("TART_GUEST_CONFIG", tempCfg)
+	defer func() {
+		os.Setenv("TART_GUEST_CONFIG", oldCfg)
+		settings.Reset()
+	}()
+
+	s := settings.DefaultSettings()
+	s.DownloadDir = tempCustom
+	require.NoError(t, settings.Save(s))
+
+	dir := filexfer.DefaultDownloadDir()
+	assert.Equal(t, tempCustom, dir)
+}
+
+func TestHandleStart_FileTransferDisabled(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_disabled_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	tempCfg := filepath.Join(tempDir, "settings.json")
+	oldCfg := os.Getenv("TART_GUEST_CONFIG")
+	os.Setenv("TART_GUEST_CONFIG", tempCfg)
+	defer func() {
+		os.Setenv("TART_GUEST_CONFIG", oldCfg)
+		settings.Reset()
+	}()
+
+	s := settings.DefaultSettings()
+	s.FileTransferEnabled = false
+	require.NoError(t, settings.Save(s))
+
+	mgr := filexfer.NewManager()
+	defer mgr.Close()
+
+	metadata := []byte("[vdagent-file-xfer]\nname=test.txt\nsize=10\n")
+	status, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   201,
+		Data: metadata,
+	})
+	assert.Error(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), status.Result)
+}
+
+func TestHandleData_SizeLessTransfer(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_sizeless_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	// Size-less start (size=0 / omitted)
+	metadata := []byte("[vdagent-file-xfer]\nname=stream.dat\n")
+	status, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:   202,
+		Data: metadata,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), status.Result)
+
+	// Send chunk
+	status, completed, err := mgr.HandleData(&vd.VDAgentFileXferData{
+		ID:   202,
+		Size: 5,
+		Data: []byte("hello"),
+	})
+	require.NoError(t, err)
+	assert.False(t, completed)
+	assert.Nil(t, status)
+
+	// Finish transfer with empty chunk
+	status, completed, err = mgr.HandleData(&vd.VDAgentFileXferData{
+		ID:   202,
+		Size: 0,
+		Data: nil,
+	})
+	require.NoError(t, err)
+	assert.True(t, completed)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS), status.Result)
+
+	content, err := os.ReadFile(filepath.Join(tempDir, "stream.dat"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(content))
 }
 
 

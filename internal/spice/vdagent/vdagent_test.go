@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
+	"github.com/cirruslabs/tart-guest-agent/internal/settings"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdi"
 	"golang.design/x/clipboard"
@@ -306,5 +309,67 @@ func TestProcessClipboardState_SuccessfulWriteCommitsState(t *testing.T) {
 	}
 	if len(agent.lastAdvertisedTypes) == 0 {
 		t.Fatalf("expected lastAdvertisedTypes to be non-empty")
+	}
+}
+
+func TestSelectGrabRequestType_ImageDisabled(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "settings_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempCfg := filepath.Join(tempDir, "settings.json")
+	oldCfg := os.Getenv("TART_GUEST_CONFIG")
+	os.Setenv("TART_GUEST_CONFIG", tempCfg)
+	defer func() {
+		os.Setenv("TART_GUEST_CONFIG", oldCfg)
+		settings.Reset()
+	}()
+
+	s := settings.DefaultSettings()
+	s.ImageClipboardEnabled = false
+	if err := settings.Save(s); err != nil {
+		t.Fatalf("failed to save settings: %v", err)
+	}
+
+	types := []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT}
+	selected, ok := selectGrabRequestType(types)
+	if !ok || selected != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
+		t.Fatalf("expected selectGrabRequestType to choose UTF8_TEXT when image is disabled, got %d (ok=%v)", selected, ok)
+	}
+
+	imageOnly := []uint32{vd.VD_AGENT_CLIPBOARD_IMAGE_PNG}
+	_, okImageOnly := selectGrabRequestType(imageOnly)
+	if okImageOnly {
+		t.Fatalf("expected selectGrabRequestType to return false for image-only grab when image clipboard is disabled")
+	}
+}
+
+func TestGetAvailableGrabTypes_ImageDisabled(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "settings_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempCfg := filepath.Join(tempDir, "settings.json")
+	oldCfg := os.Getenv("TART_GUEST_CONFIG")
+	os.Setenv("TART_GUEST_CONFIG", tempCfg)
+	defer func() {
+		os.Setenv("TART_GUEST_CONFIG", oldCfg)
+		settings.Reset()
+	}()
+
+	s := settings.DefaultSettings()
+	s.ImageClipboardEnabled = false
+	if err := settings.Save(s); err != nil {
+		t.Fatalf("failed to save settings: %v", err)
+	}
+
+	formats := []clipboard.Format{clipboard.FmtImage, clipboard.FmtText}
+	grabTypes := getAvailableGrabTypes(formats, true, true)
+	if len(grabTypes) != 1 || grabTypes[0] != vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
+		t.Fatalf("expected getAvailableGrabTypes to omit PNG when image is disabled, got %v", grabTypes)
 	}
 }

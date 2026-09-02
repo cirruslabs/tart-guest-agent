@@ -14,6 +14,7 @@ import (
 	"github.com/cirruslabs/tart-guest-agent/internal/doctor"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
+	"github.com/cirruslabs/tart-guest-agent/internal/settings"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdagent"
 	"github.com/cirruslabs/tart-guest-agent/internal/tart"
 	"github.com/cirruslabs/tart-guest-agent/internal/tray"
@@ -135,7 +136,13 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	// Component groups automatically enable certain individual components
 	if runDaemon {
-		resizeDisk = true
+		if cmd.Flags().Changed("resize-disk") {
+			// Explicit CLI flag takes precedence
+		} else if s := settings.Get(); s != nil {
+			resizeDisk = s.AutoResizeEnabled
+		} else {
+			resizeDisk = true
+		}
 	}
 
 	if runAgent {

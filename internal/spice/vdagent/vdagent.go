@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cirruslabs/tart-guest-agent/internal/settings"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/filexfer"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/imageopt"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
@@ -273,7 +274,12 @@ func (agent *VDAgent) Run(ctx context.Context) error {
 						}
 					}
 
-					if slices.Contains(formats, clipboard.FmtImage) {
+					imageEnabled := true
+					if s := settings.Get(); s != nil {
+						imageEnabled = s.ImageClipboardEnabled
+					}
+
+					if imageEnabled && slices.Contains(formats, clipboard.FmtImage) {
 						rawImg := clipboard.Read(clipboard.FmtImage)
 						if len(rawImg) > 0 {
 							if bytes.Equal(lastRawImageState, rawImg) {
@@ -439,20 +445,28 @@ func hasServableClipboardFormat(formats []clipboard.Format) bool {
 }
 
 func selectGrabRequestType(types []uint32) (uint32, bool) {
-	// 1. Prefer compressed PNG image format first
-	for _, t := range types {
-		if t == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
-			return t, true
+	imageEnabled := true
+	if s := settings.Get(); s != nil {
+		imageEnabled = s.ImageClipboardEnabled
+	}
+
+	if imageEnabled {
+		// 1. Prefer compressed PNG image format first
+		for _, t := range types {
+			if t == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG {
+				return t, true
+			}
+		}
+		// 2. Fallback to other supported image formats (BMP, TIFF, JPG)
+		for _, t := range types {
+			if t == vd.VD_AGENT_CLIPBOARD_IMAGE_BMP ||
+				t == vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF ||
+				t == vd.VD_AGENT_CLIPBOARD_IMAGE_JPG {
+				return t, true
+			}
 		}
 	}
-	// 2. Fallback to other supported image formats (BMP, TIFF, JPG)
-	for _, t := range types {
-		if t == vd.VD_AGENT_CLIPBOARD_IMAGE_BMP ||
-			t == vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF ||
-			t == vd.VD_AGENT_CLIPBOARD_IMAGE_JPG {
-			return t, true
-		}
-	}
+
 	// 3. Fallback to UTF-8 text format
 	for _, t := range types {
 		if t == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
@@ -728,6 +742,14 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 
 		switch respType {
 		case vd.VD_AGENT_CLIPBOARD_IMAGE_PNG, vd.VD_AGENT_CLIPBOARD_IMAGE_BMP, vd.VD_AGENT_CLIPBOARD_IMAGE_TIFF, vd.VD_AGENT_CLIPBOARD_IMAGE_JPG:
+			imageEnabled := true
+			if s := settings.Get(); s != nil {
+				imageEnabled = s.ImageClipboardEnabled
+			}
+			if !imageEnabled {
+				zap.S().Debugf("ignoring image clipboard request because image clipboard is disabled in settings")
+				return agent.sendClipboardData(vdAgentClipboardRequest.Selection, vd.VD_AGENT_CLIPBOARD_NONE, nil)
+			}
 			rawImg := clipboard.Read(clipboard.FmtImage)
 			if len(rawImg) > 0 {
 				if optimized, err := imageopt.OptimizeImage(rawImg); err == nil {
@@ -838,7 +860,11 @@ func (agent *VDAgent) Close() error {
 
 func getAvailableGrabTypes(formats []clipboard.Format, isImageValid bool, isTextValid bool) []uint32 {
 	var types []uint32
-	if slices.Contains(formats, clipboard.FmtImage) && isImageValid {
+	imageEnabled := true
+	if s := settings.Get(); s != nil {
+		imageEnabled = s.ImageClipboardEnabled
+	}
+	if imageEnabled && slices.Contains(formats, clipboard.FmtImage) && isImageValid {
 		types = append(types, vd.VD_AGENT_CLIPBOARD_IMAGE_PNG)
 	}
 	if slices.Contains(formats, clipboard.FmtText) && isTextValid {
@@ -854,7 +880,11 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		candidateRawImage []byte
 		candidateOptImage []byte
 	)
-	if slices.Contains(formats, clipboard.FmtImage) {
+	imageEnabled := true
+	if s := settings.Get(); s != nil {
+		imageEnabled = s.ImageClipboardEnabled
+	}
+	if imageEnabled && slices.Contains(formats, clipboard.FmtImage) {
 		rawImg := clipboard.Read(clipboard.FmtImage)
 		if len(rawImg) > 0 {
 			agent.clipMu.Lock()

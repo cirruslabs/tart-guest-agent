@@ -47,6 +47,12 @@ func NewManager() *Manager {
 }
 
 func DefaultDownloadDir() string {
+	if s := settings.Get(); s != nil && s.DownloadDir != "" {
+		if err := os.MkdirAll(s.DownloadDir, 0755); err == nil {
+			return s.DownloadDir
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
 		downloads := filepath.Join(home, "Downloads")
@@ -54,12 +60,6 @@ func DefaultDownloadDir() string {
 			return downloads
 		}
 		return home
-	}
-
-	if s := settings.Get(); s != nil && s.DownloadDir != "" {
-		if err := os.MkdirAll(s.DownloadDir, 0755); err == nil {
-			return s.DownloadDir
-		}
 	}
 
 	return filepath.Join(os.TempDir(), "tart-transfers")
@@ -79,6 +79,14 @@ const MaxActiveTransfers = 64
 func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXferStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if s := settings.Get(); s != nil && !s.FileTransferEnabled {
+		zap.S().Warnf("filexfer: file transfer is disabled in settings, rejecting task id=%d", msg.ID)
+		return &vd.VDAgentFileXferStatus{
+			ID:     msg.ID,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, fmt.Errorf("file transfer is disabled in settings")
+	}
 
 	// Clean up any existing active task with duplicate ID before space check and path selection
 	if existingTask, exists := m.tasks[msg.ID]; exists {
@@ -131,6 +139,18 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 					ID:     msg.ID,
 					Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
 				}, fmt.Errorf("not enough disk space: required %d bytes, available %d bytes (reserved %d bytes)", fileSize, avail, reservedSpace)
+			}
+		}
+	} else {
+		// For size-less transfers, verify that the download filesystem has unreserved free space available
+		if avail, err := getAvailableDiskSpace(m.downloadDir); err == nil {
+			if avail <= reservedSpace {
+				zap.S().Warnf("filexfer: no unreserved disk space available for size-less transfer id=%d (available: %d bytes, reserved: %d bytes)",
+					msg.ID, avail, reservedSpace)
+				return &vd.VDAgentFileXferStatus{
+					ID:     msg.ID,
+					Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
+				}, fmt.Errorf("not enough disk space: available %d bytes, reserved %d bytes", avail, reservedSpace)
 			}
 		}
 	}
@@ -213,6 +233,23 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 			ID:     msg.ID,
 			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
 		}, false, fmt.Errorf("chunk size exceeds advertised file size")
+	}
+
+	// For size-less transfers, enforce that the filesystem has enough free space for the incoming chunk
+	if task.totalSize == 0 {
+		if avail, err := getAvailableDiskSpace(m.downloadDir); err == nil {
+			if avail < uint64(len(msg.Data)) {
+				zap.S().Warnf("filexfer: not enough disk space for size-less transfer id=%d chunk (%d bytes required, %d bytes available)",
+					task.id, len(msg.Data), avail)
+				_ = task.file.Close()
+				_ = os.Remove(task.targetPath)
+				delete(m.tasks, msg.ID)
+				return &vd.VDAgentFileXferStatus{
+					ID:     msg.ID,
+					Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
+				}, false, fmt.Errorf("not enough disk space for incoming chunk (%d bytes required, %d bytes available)", len(msg.Data), avail)
+			}
+		}
 	}
 
 	n, err := task.file.Write(msg.Data)
