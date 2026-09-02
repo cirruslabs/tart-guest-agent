@@ -863,14 +863,20 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		(clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG && agent.selfImageWritePending &&
 			bytes.Equal(agent.lastOptimizedImage, candidateOptImage))
 
-	if isSelfWrite {
+	// When an inbound host image replaces an existing text clipboard (or host text replaces an image),
+	// the OS pasteboard clears the opposite format. Suppress this cross-format removal echo so it does not
+	// trigger a spurious guest grab or clobber host ownership.
+	isCrossFormatEcho := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && len(newClipboardState) == 0 && agent.selfImageWritePending) ||
+		(clipType == vd.VD_AGENT_CLIPBOARD_IMAGE_PNG && len(candidateOptImage) == 0 && agent.selfTextWritePending)
+
+	if isSelfWrite || isCrossFormatEcho {
 		if clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT {
 			agent.selfTextWritePending = false
 		} else {
 			agent.selfImageWritePending = false
 		}
 		agent.clipMu.Unlock()
-		zap.S().Debugf("suppressing self-write echo grab for inbound host clipboard")
+		zap.S().Debugf("suppressing self-write or cross-format removal echo for inbound host clipboard")
 		return nil
 	}
 

@@ -418,3 +418,24 @@ func TestVDAgent_GuestGrab_HostOwnershipPreserved(t *testing.T) {
 		t.Fatalf("expected isHostOwned to remain true after host took precedence")
 	}
 }
+
+func TestVDAgent_CrossFormatEchoSuppressed(t *testing.T) {
+	var writeBuf bytes.Buffer
+	agent := &VDAgent{
+		vdi:                   vdi.New(&writeBuf),
+		clipboardEnabled:      true,
+		isHostOwned:           true,
+		selfImageWritePending: true, // host image write in flight
+	}
+
+	// Text format receives an empty event because host image write cleared text
+	err := agent.processClipboardState(nil, vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// No message should have been written out (no spurious guest grab/release)
+	if writeBuf.Len() > 0 {
+		t.Fatalf("expected no outbound messages for cross-format removal echo, wrote %d bytes", writeBuf.Len())
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"unicode"
+	"unicode/utf8"
 )
 
 // File transfer status codes
@@ -19,6 +21,45 @@ const (
 	VD_AGENT_FILE_XFER_STATUS_VDAGENT_NOT_CONNECTED
 	VD_AGENT_FILE_XFER_STATUS_DISABLED
 )
+
+// isTextMetadata returns true if the buffer represents text-based metadata or a bare filename
+// rather than a standard binary [uint64 size][filename] payload.
+func isTextMetadata(data []byte) bool {
+	trimmed := bytes.TrimLeft(data, " \t\r\n")
+	if bytes.HasPrefix(trimmed, []byte("[")) {
+		return true
+	}
+	if bytes.HasPrefix(trimmed, []byte("name=")) || bytes.HasPrefix(trimmed, []byte("size=")) {
+		return true
+	}
+	if bytes.Contains(data, []byte("\n")) {
+		return true
+	}
+
+	// Check if data is a bare filename (e.g. "report.pdf\0" or "document.txt")
+	nulIdx := bytes.IndexByte(data, 0x00)
+	var candidate []byte
+	if nulIdx >= 0 {
+		candidate = data[:nulIdx]
+	} else {
+		candidate = data
+	}
+
+	if len(candidate) > 0 && utf8.Valid(candidate) {
+		isAllPrintable := true
+		for _, r := range string(candidate) {
+			if !unicode.IsPrint(r) {
+				isAllPrintable = false
+				break
+			}
+		}
+		if isAllPrintable {
+			return true
+		}
+	}
+
+	return false
+}
 
 // VDAgentFileXferStart initiates a file transfer task.
 type VDAgentFileXferStart struct {
@@ -38,9 +79,8 @@ func DecodeVDAgentFileXferStart(buf []byte) (*VDAgentFileXferStart, error) {
 	var fileSize uint64
 	data := rem
 
-	trimmed := bytes.TrimLeft(rem, " \t\r\n")
-	// If rem is not INI-style metadata ("[...]") and has at least 8 bytes for size
-	if !bytes.HasPrefix(trimmed, []byte("[")) && len(rem) >= 8 {
+	// If rem is not text metadata or a bare filename, and has at least 8 bytes for size
+	if !isTextMetadata(rem) && len(rem) >= 8 {
 		fileSize = binary.LittleEndian.Uint64(rem[:8])
 		data = rem[8:]
 	}
@@ -59,7 +99,7 @@ func (msg VDAgentFileXferStart) Encode() ([]byte, error) {
 		return nil, err
 	}
 
-	if msg.FileSize > 0 && !bytes.HasPrefix(bytes.TrimLeft(msg.Data, " \t\r\n"), []byte("[")) {
+	if msg.FileSize > 0 && !isTextMetadata(msg.Data) {
 		if err := binary.Write(buffer, binary.LittleEndian, msg.FileSize); err != nil {
 			return nil, err
 		}

@@ -123,3 +123,31 @@ func TestFileXferStart_IniFormat(t *testing.T) {
 	assert.Equal(t, uint64(0), msg.FileSize) // parsed in manager parseMetadata
 	assert.Contains(t, string(msg.Data), "name=doc.pdf")
 }
+
+func TestFileXferStart_BareFilename_SizeLess(t *testing.T) {
+	// Bare filename >= 8 bytes without binary size prefix: "report.pdf\0"
+	raw := []byte{
+		0x07, 0x00, 0x00, 0x00, // ID = 7
+		'r', 'e', 'p', 'o', 'r', 't', '.', 'p', 'd', 'f', 0x00,
+	}
+
+	msg, err := vd.DecodeVDAgentFileXferStart(raw)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(7), msg.ID)
+	assert.Equal(t, uint64(0), msg.FileSize) // Not misinterpreted as 8-byte uint64 size
+	assert.Equal(t, "report.pdf\x00", string(msg.Data))
+}
+
+func TestFileXferStart_KeyValue_SizeLess(t *testing.T) {
+	// Key-value without bracket header: "name=report.pdf\n"
+	raw := []byte{
+		0x08, 0x00, 0x00, 0x00, // ID = 8
+		'n', 'a', 'm', 'e', '=', 'r', 'e', 'p', 'o', 'r', 't', '.', 'p', 'd', 'f', '\n',
+	}
+
+	msg, err := vd.DecodeVDAgentFileXferStart(raw)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(8), msg.ID)
+	assert.Equal(t, uint64(0), msg.FileSize)
+	assert.Equal(t, "name=report.pdf\n", string(msg.Data))
+}
