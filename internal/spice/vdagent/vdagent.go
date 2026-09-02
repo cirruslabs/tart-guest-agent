@@ -832,17 +832,9 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 				zap.S().Warnf("ignoring unservable guest clipboard image (%d bytes): %v", len(newClipboardState), err)
 			}
 		} else {
-			// For text updates or other non-image events, use cached image state if available to avoid reading full image payload
-			agent.clipMu.Lock()
-			cachedRaw := agent.lastRawImageState
-			cachedOpt := agent.lastOptimizedImage
-			agent.clipMu.Unlock()
-
-			if len(cachedOpt) > 0 {
-				isImageValid = true
-				candidateRawImage = cachedRaw
-				candidateOptImage = cachedOpt
-			}
+			// For text updates or other non-image events, omit image from this grab;
+			// the image watcher will independently validate and advertise the image event.
+			isImageValid = false
 		}
 	}
 
@@ -899,17 +891,23 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		if err != nil {
 			return err
 		}
-		zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
-		if err := agent.writeMessage(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes); err != nil {
-			return err
-		}
+
+		agent.writeMu.Lock()
+		defer agent.writeMu.Unlock()
 
 		agent.clipMu.Lock()
 		if agent.clipGen != initialGen || agent.isHostOwned {
 			agent.clipMu.Unlock()
-			zap.S().Debugf("suppressing guest release commit; host ownership or newer clipboard event took precedence")
+			zap.S().Debugf("suppressing guest release emission; host ownership or newer clipboard event took precedence")
 			return nil
 		}
+
+		zap.S().Debugf("O: VD_AGENT_CLIPBOARD_RELEASE")
+		if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD_RELEASE, releaseBytes); err != nil {
+			agent.clipMu.Unlock()
+			return err
+		}
+
 		agent.clipGen++
 		agent.selfTextWritePending = false
 		agent.selfImageWritePending = false
@@ -932,17 +930,22 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		return err
 	}
 
-	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (types=%v)", types)
-	if err := agent.writeMessage(vd.VD_AGENT_CLIPBOARD_GRAB, ourGrabBytes); err != nil {
-		return err
-	}
+	agent.writeMu.Lock()
+	defer agent.writeMu.Unlock()
 
 	agent.clipMu.Lock()
 	if agent.clipGen != initialGen || agent.isHostOwned {
 		agent.clipMu.Unlock()
-		zap.S().Debugf("suppressing guest grab commit; host ownership or newer clipboard event took precedence (gen %d != %d, isHost=%v)", agent.clipGen, initialGen, agent.isHostOwned)
+		zap.S().Debugf("suppressing guest grab emission; host ownership or newer clipboard event took precedence (gen %d != %d, isHost=%v)", agent.clipGen, initialGen, agent.isHostOwned)
 		return nil
 	}
+
+	zap.S().Debugf("O: VD_AGENT_CLIPBOARD_GRAB (types=%v)", types)
+	if err := agent.writeMessageLocked(vd.VD_AGENT_CLIPBOARD_GRAB, ourGrabBytes); err != nil {
+		agent.clipMu.Unlock()
+		return err
+	}
+
 	agent.clipGen++
 	agent.selfTextWritePending = false
 	agent.selfImageWritePending = false

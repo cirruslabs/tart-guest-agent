@@ -124,18 +124,18 @@ func TestFileXferStart_IniFormat(t *testing.T) {
 	assert.Contains(t, string(msg.Data), "name=doc.pdf")
 }
 
-func TestFileXferStart_BareFilename_SizeLess(t *testing.T) {
-	// Bare filename >= 8 bytes without binary size prefix: "report.pdf\0"
+func TestFileXferStart_BareFilename_Short(t *testing.T) {
+	// Bare filename < 8 bytes: "doc.txt\0"
 	raw := []byte{
 		0x07, 0x00, 0x00, 0x00, // ID = 7
-		'r', 'e', 'p', 'o', 'r', 't', '.', 'p', 'd', 'f', 0x00,
+		'd', 'o', 'c', '.', 't', 'x', 't', 0x00,
 	}
 
 	msg, err := vd.DecodeVDAgentFileXferStart(raw)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(7), msg.ID)
-	assert.Equal(t, uint64(0), msg.FileSize) // Not misinterpreted as 8-byte uint64 size
-	assert.Equal(t, "report.pdf\x00", string(msg.Data))
+	assert.Equal(t, uint64(0), msg.FileSize)
+	assert.Equal(t, "doc.txt\x00", string(msg.Data))
 }
 
 func TestFileXferStart_KeyValue_SizeLess(t *testing.T) {
@@ -150,4 +150,19 @@ func TestFileXferStart_KeyValue_SizeLess(t *testing.T) {
 	assert.Equal(t, uint32(8), msg.ID)
 	assert.Equal(t, uint64(0), msg.FileSize)
 	assert.Equal(t, "name=report.pdf\n", string(msg.Data))
+}
+
+func TestFileXferStart_BinarySizeWithNewlineByte(t *testing.T) {
+	// Size = 10 (0x0a), which contains byte 0x0a ('\n')
+	raw := []byte{
+		0x09, 0x00, 0x00, 0x00, // ID = 9
+		0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size = 10
+		't', 'e', 's', 't', '.', 't', 'x', 't', 0x00,
+	}
+
+	msg, err := vd.DecodeVDAgentFileXferStart(raw)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(9), msg.ID)
+	assert.Equal(t, uint64(10), msg.FileSize)
+	assert.Equal(t, "test.txt\x00", string(msg.Data))
 }
