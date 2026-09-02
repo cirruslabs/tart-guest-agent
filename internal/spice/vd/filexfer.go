@@ -22,8 +22,9 @@ const (
 
 // VDAgentFileXferStart initiates a file transfer task.
 type VDAgentFileXferStart struct {
-	ID   uint32
-	Data []byte // Variable length metadata (key-value or raw filename)
+	ID       uint32
+	FileSize uint64 // Advertised total file size (parsed from binary size field or 0 if omitted)
+	Data     []byte // Variable length metadata (key-value or raw filename)
 }
 
 func DecodeVDAgentFileXferStart(buf []byte) (*VDAgentFileXferStart, error) {
@@ -31,20 +32,23 @@ func DecodeVDAgentFileXferStart(buf []byte) (*VDAgentFileXferStart, error) {
 		return nil, io.ErrUnexpectedEOF
 	}
 
-	r := bufio.NewReader(bytes.NewReader(buf))
-	var id uint32
-	if err := binary.Read(r, binary.LittleEndian, &id); err != nil {
-		return nil, err
-	}
+	id := binary.LittleEndian.Uint32(buf[:4])
+	rem := buf[4:]
 
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
+	var fileSize uint64
+	data := rem
+
+	trimmed := bytes.TrimLeft(rem, " \t\r\n")
+	// If rem is not INI-style metadata ("[...]") and has at least 8 bytes for size
+	if !bytes.HasPrefix(trimmed, []byte("[")) && len(rem) >= 8 {
+		fileSize = binary.LittleEndian.Uint64(rem[:8])
+		data = rem[8:]
 	}
 
 	return &VDAgentFileXferStart{
-		ID:   id,
-		Data: data,
+		ID:       id,
+		FileSize: fileSize,
+		Data:     data,
 	}, nil
 }
 
@@ -53,6 +57,12 @@ func (msg VDAgentFileXferStart) Encode() ([]byte, error) {
 
 	if err := binary.Write(buffer, binary.LittleEndian, msg.ID); err != nil {
 		return nil, err
+	}
+
+	if msg.FileSize > 0 && !bytes.HasPrefix(bytes.TrimLeft(msg.Data, " \t\r\n"), []byte("[")) {
+		if err := binary.Write(buffer, binary.LittleEndian, msg.FileSize); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := buffer.Write(msg.Data); err != nil {

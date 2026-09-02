@@ -373,3 +373,24 @@ func TestGetAvailableGrabTypes_ImageDisabled(t *testing.T) {
 		t.Fatalf("expected getAvailableGrabTypes to omit PNG when image is disabled, got %v", grabTypes)
 	}
 }
+
+func TestVDAgent_ReadMessage_OversizedPayloadRejected(t *testing.T) {
+	// Craft header with inner.Size = 0xffffffff (4GB)
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.LittleEndian, vd.VD_AGENT_PROTOCOL)
+	binary.Write(&buf, binary.LittleEndian, vd.VD_AGENT_CLIPBOARD)
+	binary.Write(&buf, binary.LittleEndian, uint32(0)) // opaque
+	binary.Write(&buf, binary.LittleEndian, uint32(0xffffffff)) // 4GB size
+
+	agent := &VDAgent{
+		vdi: vdi.New(&buf),
+	}
+
+	msg, err := agent.readMessage()
+	if err == nil {
+		t.Fatalf("expected error for oversized message, got message: %v", msg)
+	}
+	if msg != nil {
+		t.Fatalf("expected nil message when size is rejected")
+	}
+}

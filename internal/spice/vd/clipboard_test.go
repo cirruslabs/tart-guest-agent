@@ -92,3 +92,34 @@ func TestClipboardReleaseEncoding(t *testing.T) {
 	assert.Equal(t, uint8(vd.VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD), decoded.Selection)
 	assert.Contains(t, rel.String(), "selection=0")
 }
+
+func TestFileXferStart_StandardBinarySize(t *testing.T) {
+	// Standard SPICE start message: [id: 4 bytes][size: 8 bytes][filename: NUL-terminated string]
+	raw := []byte{
+		0x05, 0x00, 0x00, 0x00, // ID = 5
+		0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size = 0x1020 (4128 bytes)
+		'a', 'r', 'c', 'h', 'i', 'v', 'e', '.', 't', 'a', 'r', 0x00, // Filename = "archive.tar"
+	}
+
+	msg, err := vd.DecodeVDAgentFileXferStart(raw)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(5), msg.ID)
+	assert.Equal(t, uint64(4128), msg.FileSize)
+	assert.Equal(t, "archive.tar\x00", string(msg.Data))
+}
+
+func TestFileXferStart_IniFormat(t *testing.T) {
+	// INI-style metadata: [id: 4 bytes][ini text]
+	raw := []byte{
+		0x06, 0x00, 0x00, 0x00, // ID = 6
+		'[', 'v', 'd', 'a', 'g', 'e', 'n', 't', '-', 'f', 'i', 'l', 'e', '-', 'x', 'f', 'e', 'r', ']', '\n',
+		'n', 'a', 'm', 'e', '=', 'd', 'o', 'c', '.', 'p', 'd', 'f', '\n',
+		's', 'i', 'z', 'e', '=', '1', '0', '2', '4', '\n',
+	}
+
+	msg, err := vd.DecodeVDAgentFileXferStart(raw)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(6), msg.ID)
+	assert.Equal(t, uint64(0), msg.FileSize) // parsed in manager parseMetadata
+	assert.Contains(t, string(msg.Data), "name=doc.pdf")
+}

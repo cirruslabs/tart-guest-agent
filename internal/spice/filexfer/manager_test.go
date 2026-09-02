@@ -440,6 +440,39 @@ func TestHandleData_SizeLessTransfer(t *testing.T) {
 	assert.Equal(t, "hello", string(content))
 }
 
+func TestHandleStart_StandardBinarySize(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "filexfer_binsize_*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	mgr := filexfer.NewManager()
+	mgr.SetDownloadDir(tempDir)
+	defer mgr.Close()
+
+	// Decoded standard SPICE start with binary size = 11 bytes
+	status, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+		ID:       303,
+		FileSize: 11,
+		Data:     []byte("binary.dat\x00"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), status.Result)
+
+	// Send exactly 11 bytes
+	status, completed, err := mgr.HandleData(&vd.VDAgentFileXferData{
+		ID:   303,
+		Size: 11,
+		Data: []byte("hello world"),
+	})
+	require.NoError(t, err)
+	assert.True(t, completed)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_SUCCESS), status.Result)
+
+	content, err := os.ReadFile(filepath.Join(tempDir, "binary.dat"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", string(content))
+}
+
 
 
 

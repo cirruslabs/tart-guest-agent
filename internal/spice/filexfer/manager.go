@@ -105,7 +105,7 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 		}, fmt.Errorf("active transfer limit (%d) reached", MaxActiveTransfers)
 	}
 
-	fileName, fileSize, err := parseMetadata(msg.Data)
+	fileName, fileSize, err := parseMetadata(msg.Data, msg.FileSize)
 	if err != nil {
 		zap.S().Errorf("filexfer: failed parsing transfer metadata for task id=%d: %v", msg.ID, err)
 		return &vd.VDAgentFileXferStatus{
@@ -341,10 +341,10 @@ func (m *Manager) Close() {
 	}
 }
 
-func parseMetadata(data []byte) (string, uint64, error) {
+func parseMetadata(data []byte, initialSize uint64) (string, uint64, error) {
 	str := string(bytes.TrimRight(data, "\x00"))
 	var fileName string
-	var fileSize uint64
+	fileSize := initialSize
 
 	lines := strings.Split(str, "\n")
 	for _, line := range lines {

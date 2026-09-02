@@ -942,10 +942,17 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	return nil
 }
 
+// MaxVDAgentMessageSize caps the maximum message payload allocated to prevent OOM / DoS from malformed peers (64MB).
+const MaxVDAgentMessageSize = 64 * 1024 * 1024
+
 func (agent *VDAgent) readMessage() (*vd.VDAgentMessage, error) {
 	var inner vd.VDAgentMessageInner
 	if err := binary.Read(agent.vdi, binary.LittleEndian, &inner); err != nil {
 		return nil, err
+	}
+
+	if inner.Size > MaxVDAgentMessageSize {
+		return nil, fmt.Errorf("vdagent: message size %d exceeds maximum allowable limit (%d bytes)", inner.Size, MaxVDAgentMessageSize)
 	}
 
 	data := make([]byte, inner.Size)
