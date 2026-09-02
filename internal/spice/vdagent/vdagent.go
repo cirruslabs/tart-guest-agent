@@ -129,6 +129,7 @@ type VDAgent struct {
 	isHostOwned           bool
 	selfTextWritePending  bool
 	selfImageWritePending bool
+	clipGen               uint64
 	clipMu                sync.Mutex
 	fileXferMgr           *filexfer.Manager
 	clipboardEnabled      bool
@@ -447,6 +448,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 		agent.clipMu.Lock()
+		agent.clipGen++
 		agent.lastHostGrabTypes = vdAgentClipboardGrab.Types
 		agent.lastAdvertisedTypes = nil
 		agent.isHostOwned = true
@@ -616,6 +618,7 @@ func (agent *VDAgent) handleMessage(vdiAgentMessage *vd.VDAgentMessage) error {
 		}
 
 		agent.clipMu.Lock()
+		agent.clipGen++
 		wasHostOwned := agent.isHostOwned
 		agent.isHostOwned = false
 		if wasHostOwned {
@@ -852,6 +855,7 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	}
 
 	agent.clipMu.Lock()
+	initialGen := agent.clipGen
 	isSelfWrite := (clipType == vd.VD_AGENT_CLIPBOARD_UTF8_TEXT && agent.selfTextWritePending &&
 		bytes.Equal(agent.lastClipboardState, newClipboardState) &&
 		agent.lastClipboardType == clipType &&
@@ -894,6 +898,12 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 		}
 
 		agent.clipMu.Lock()
+		if agent.clipGen != initialGen || agent.isHostOwned {
+			agent.clipMu.Unlock()
+			zap.S().Debugf("suppressing guest release commit; host ownership or newer clipboard event took precedence")
+			return nil
+		}
+		agent.clipGen++
 		agent.selfTextWritePending = false
 		agent.selfImageWritePending = false
 		agent.lastClipboardState = nil
@@ -921,6 +931,12 @@ func (agent *VDAgent) processClipboardState(newClipboardState []byte, clipType u
 	}
 
 	agent.clipMu.Lock()
+	if agent.clipGen != initialGen || agent.isHostOwned {
+		agent.clipMu.Unlock()
+		zap.S().Debugf("suppressing guest grab commit; host ownership or newer clipboard event took precedence (gen %d != %d, isHost=%v)", agent.clipGen, initialGen, agent.isHostOwned)
+		return nil
+	}
+	agent.clipGen++
 	agent.selfTextWritePending = false
 	agent.selfImageWritePending = false
 	agent.lastAdvertisedTypes = types

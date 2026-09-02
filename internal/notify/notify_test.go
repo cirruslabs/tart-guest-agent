@@ -10,6 +10,9 @@ import (
 )
 
 func TestNotificationDispatch(t *testing.T) {
+	t.Setenv("TART_GUEST_ACTIVITY", t.TempDir()+"/activity_notify.json")
+	activity.Clear()
+
 	s := settings.DefaultSettings()
 	s.NotificationsEnabled = true
 	require.NoError(t, settings.Save(s))
@@ -17,7 +20,6 @@ func TestNotificationDispatch(t *testing.T) {
 	err := Send("Test Title", "Test Message", UrgencyLow)
 	assert.NoError(t, err)
 
-	activity.Clear()
 	FileTransferCompleted("test.pdf", 1024)
 	events := activity.List()
 	require.Len(t, events, 1)

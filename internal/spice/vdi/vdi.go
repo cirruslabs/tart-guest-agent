@@ -3,8 +3,10 @@ package vdi
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
+	"fmt"
 	"io"
+
+	"github.com/cirruslabs/tart-guest-agent/internal/spice/vd"
 )
 
 type VDI struct {
@@ -43,6 +45,10 @@ func (vdi *VDI) Read(buf []byte) (int, error) {
 		var vdiChunkHeader chunkHeader
 		if err := binary.Read(vdi.inner, binary.LittleEndian, &vdiChunkHeader); err != nil {
 			return 0, err
+		}
+
+		if vdiChunkHeader.Size > MaxChunkSize {
+			return 0, fmt.Errorf("vdi: chunk size %d exceeds maximum allowable limit (%d bytes)", vdiChunkHeader.Size, MaxChunkSize)
 		}
 
 		vdi.remaining = uint64(vdiChunkHeader.Size)

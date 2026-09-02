@@ -394,3 +394,27 @@ func TestVDAgent_ReadMessage_OversizedPayloadRejected(t *testing.T) {
 		t.Fatalf("expected nil message when size is rejected")
 	}
 }
+
+func TestVDAgent_GuestGrab_HostOwnershipPreserved(t *testing.T) {
+	var writeBuf bytes.Buffer
+	agent := &VDAgent{
+		vdi:              vdi.New(&writeBuf),
+		clipboardEnabled: true,
+		isHostOwned:      true,
+		clipGen:          42,
+	}
+
+	// Calling processClipboardState with new text when isHostOwned=true and clipGen changes in flight
+	// Emulate host grab claiming ownership
+	err := agent.processClipboardState([]byte("stale guest text"), vd.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	agent.clipMu.Lock()
+	defer agent.clipMu.Unlock()
+	// Should not have clobbered isHostOwned
+	if !agent.isHostOwned {
+		t.Fatalf("expected isHostOwned to remain true after host took precedence")
+	}
+}
