@@ -172,6 +172,19 @@ func DecodeVDAgentFileXferData(buf []byte) (*VDAgentFileXferData, error) {
 		return nil, err
 	}
 
+	if uint64(len(data)) < header.Size {
+		return nil, fmt.Errorf(
+			"filexfer data truncated: header declared %d bytes, payload has %d bytes: %w",
+			header.Size, len(data), io.ErrUnexpectedEOF,
+		)
+	}
+	if uint64(len(data)) > header.Size {
+		return nil, fmt.Errorf(
+			"filexfer data overflow: header declared %d bytes, payload has %d bytes",
+			header.Size, len(data),
+		)
+	}
+
 	return &VDAgentFileXferData{
 		ID:   header.ID,
 		Size: header.Size,

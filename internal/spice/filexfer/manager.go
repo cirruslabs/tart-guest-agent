@@ -2,6 +2,7 @@ package filexfer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -205,6 +206,10 @@ func (m *Manager) HandleStart(msg *vd.VDAgentFileXferStart) (*vd.VDAgentFileXfer
 
 // HandleData appends binary data chunk to an ongoing file transfer task.
 func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferStatus, bool, error) {
+	if msg == nil {
+		return nil, false, errors.New("filexfer: nil data message")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -217,15 +222,28 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 		}, false, fmt.Errorf("task %d not found", msg.ID)
 	}
 
-	// If size is 0 or empty data, indicates completion
-	if msg.Size == 0 || len(msg.Data) == 0 {
+	// Validate chunk size against actual data length
+	if uint64(len(msg.Data)) != msg.Size {
+		zap.S().Errorf("filexfer: task id=%d chunk size mismatch: declared %d bytes, payload has %d bytes",
+			task.id, msg.Size, len(msg.Data))
+		_ = task.file.Close()
+		_ = os.Remove(task.targetPath)
+		delete(m.tasks, msg.ID)
+		return &vd.VDAgentFileXferStatus{
+			ID:     msg.ID,
+			Result: vd.VD_AGENT_FILE_XFER_STATUS_ERROR,
+		}, false, fmt.Errorf("chunk size mismatch: declared %d bytes, payload has %d bytes", msg.Size, len(msg.Data))
+	}
+
+	// An empty chunk with size == 0 indicates end-of-file completion
+	if msg.Size == 0 {
 		return m.finishTask(task)
 	}
 
 	// Reject chunk before writing if it would cause received bytes to exceed total advertised size
-	if task.totalSize > 0 && task.bytesRcvd+uint64(len(msg.Data)) > task.totalSize {
+	if task.totalSize > 0 && task.bytesRcvd+msg.Size > task.totalSize {
 		zap.S().Errorf("filexfer: task id=%d chunk (%d bytes) exceeds total advertised size (%d bytes, received %d bytes)",
-			task.id, len(msg.Data), task.totalSize, task.bytesRcvd)
+			task.id, msg.Size, task.totalSize, task.bytesRcvd)
 		_ = task.file.Close()
 		_ = os.Remove(task.targetPath)
 		delete(m.tasks, msg.ID)
@@ -238,21 +256,24 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 	// For size-less transfers, enforce that the filesystem has enough free space for the incoming chunk
 	if task.totalSize == 0 {
 		if avail, err := getAvailableDiskSpace(m.downloadDir); err == nil {
-			if avail < uint64(len(msg.Data)) {
+			if avail < msg.Size {
 				zap.S().Warnf("filexfer: not enough disk space for size-less transfer id=%d chunk (%d bytes required, %d bytes available)",
-					task.id, len(msg.Data), avail)
+					task.id, msg.Size, avail)
 				_ = task.file.Close()
 				_ = os.Remove(task.targetPath)
 				delete(m.tasks, msg.ID)
 				return &vd.VDAgentFileXferStatus{
 					ID:     msg.ID,
 					Result: vd.VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE,
-				}, false, fmt.Errorf("not enough disk space for incoming chunk (%d bytes required, %d bytes available)", len(msg.Data), avail)
+				}, false, fmt.Errorf(
+					"not enough disk space for incoming chunk (%d bytes required, %d bytes available)",
+					msg.Size, avail,
+				)
 			}
 		}
 	}
 
-	n, err := task.file.Write(msg.Data)
+	bytesWritten, err := task.file.Write(msg.Data[:msg.Size])
 	if err != nil {
 		zap.S().Errorf("filexfer: failed writing to %s: %v", task.targetPath, err)
 		_ = task.file.Close()
@@ -264,7 +285,7 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 		}, false, err
 	}
 
-	task.bytesRcvd += uint64(n)
+	task.bytesRcvd += uint64(bytesWritten)
 
 	// If totalSize was reached
 	if task.totalSize > 0 && task.bytesRcvd >= task.totalSize {

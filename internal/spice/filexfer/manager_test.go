@@ -473,7 +473,70 @@ func TestHandleStart_StandardBinarySize(t *testing.T) {
 	assert.Equal(t, "hello world", string(content))
 }
 
+func TestHandleData_SizeMismatch_Regressions(t *testing.T) {
+	testCases := []struct {
+		name         string
+		id           uint32
+		fileName     string
+		declaredSize uint64
+		payload      []byte
+	}{
+		{
+			name:         "declared less than payload",
+			id:           401,
+			fileName:     "mismatch_less.bin",
+			declaredSize: 1,
+			payload:      []byte("payload of many bytes"),
+		},
+		{
+			name:         "declared greater than payload",
+			id:           402,
+			fileName:     "mismatch_greater.bin",
+			declaredSize: 50,
+			payload:      []byte("short"),
+		},
+		{
+			name:         "declared zero with non-empty payload",
+			id:           403,
+			fileName:     "mismatch_zero.bin",
+			declaredSize: 0,
+			payload:      []byte("sneaky payload"),
+		},
+	}
 
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			mgr := filexfer.NewManager()
+			mgr.SetDownloadDir(tempDir)
+			defer mgr.Close()
 
+			_, err := mgr.HandleStart(&vd.VDAgentFileXferStart{
+				ID:   testCase.id,
+				Data: []byte("name=" + testCase.fileName + "\n"),
+			})
+			require.NoError(t, err)
 
+			status, completed, err := mgr.HandleData(&vd.VDAgentFileXferData{
+				ID:   testCase.id,
+				Size: testCase.declaredSize,
+				Data: testCase.payload,
+			})
+			require.Error(t, err)
+			assert.False(t, completed)
+			require.NotNil(t, status)
+			assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_ERROR), status.Result)
+			assert.NoFileExists(t, filepath.Join(tempDir, testCase.fileName))
+		})
+	}
+}
 
+func TestHandleData_NilMessage(t *testing.T) {
+	mgr := filexfer.NewManager()
+	defer mgr.Close()
+
+	status, completed, err := mgr.HandleData(nil)
+	require.Error(t, err)
+	assert.False(t, completed)
+	assert.Nil(t, status)
+}
