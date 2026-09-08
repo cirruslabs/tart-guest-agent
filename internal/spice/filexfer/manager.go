@@ -292,8 +292,11 @@ func (m *Manager) HandleData(msg *vd.VDAgentFileXferData) (*vd.VDAgentFileXferSt
 		return m.finishTask(task)
 	}
 
-	// Intermediate chunks do not emit status responses (avoids concurrent async read storms)
-	return nil, false, nil
+	// Intermediate chunks emit CAN_SEND_DATA for flow control so sender knows it can send the next chunk
+	return &vd.VDAgentFileXferStatus{
+		ID:     task.id,
+		Result: vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA,
+	}, false, nil
 }
 
 func (m *Manager) finishTask(task *transferTask) (*vd.VDAgentFileXferStatus, bool, error) {

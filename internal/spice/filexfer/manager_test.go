@@ -34,7 +34,7 @@ func TestFileXferManager_EndToEnd(t *testing.T) {
 	assert.Equal(t, uint32(42), startStatus.ID)
 	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), startStatus.Result)
 
-	// 2. Send data chunk 1 (23 bytes) -> intermediate chunk, no status reply needed
+	// 2. Send data chunk 1 (23 bytes) -> intermediate chunk, CAN_SEND_DATA reply for flow control
 	chunk1 := []byte("%PDF-1.4 Mock PDF Data ")
 	dataMsg1 := &vd.VDAgentFileXferData{
 		ID:   42,
@@ -44,7 +44,9 @@ func TestFileXferManager_EndToEnd(t *testing.T) {
 	status1, completed1, err := mgr.HandleData(dataMsg1)
 	require.NoError(t, err)
 	assert.False(t, completed1)
-	assert.Nil(t, status1)
+	assert.NotNil(t, status1)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), status1.Result)
+	assert.Equal(t, uint32(42), status1.ID)
 
 	// 3. Send data chunk 2 (23 bytes) -> completes transfer at totalSize
 	chunk2 := []byte("Additional Stream Chunk")
@@ -283,13 +285,16 @@ func TestFileXferManager_MissingSize(t *testing.T) {
 
 	// Data chunk followed by 0-byte EOF chunk
 	dataChunk := []byte("hello stream")
-	_, completed1, err := mgr.HandleData(&vd.VDAgentFileXferData{
+	statusChunk1, completed1, err := mgr.HandleData(&vd.VDAgentFileXferData{
 		ID:   103,
 		Size: uint64(len(dataChunk)),
 		Data: dataChunk,
 	})
 	require.NoError(t, err)
 	assert.False(t, completed1)
+	assert.NotNil(t, statusChunk1)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), statusChunk1.Result)
+	assert.Equal(t, uint32(103), statusChunk1.ID)
 
 	statusEOF, completedEOF, err := mgr.HandleData(&vd.VDAgentFileXferData{
 		ID:   103,
@@ -423,7 +428,9 @@ func TestHandleData_SizeLessTransfer(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.False(t, completed)
-	assert.Nil(t, status)
+	assert.NotNil(t, status)
+	assert.Equal(t, uint32(vd.VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA), status.Result)
+	assert.Equal(t, uint32(202), status.ID)
 
 	// Finish transfer with empty chunk
 	status, completed, err = mgr.HandleData(&vd.VDAgentFileXferData{
