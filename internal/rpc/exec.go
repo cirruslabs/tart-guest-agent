@@ -12,7 +12,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/cirruslabs/tart-guest-agent/internal/execuser"
 	"github.com/cirruslabs/tart-guest-agent/pkg/v1"
 	"github.com/creack/pty"
 	"github.com/google/uuid"
@@ -77,7 +76,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResp
 	if firstExecRequestCommand.Command.Detach {
 		cmd.Stdout = io.Discard
 		cmd.Stderr = io.Discard
-		cmd.SysProcAttr.Setsid = true
+		configureDetachedSysProcAttr(cmd)
 
 		if err := cmd.Start(); err != nil {
 			zap.S().Warnf("failed to start %s: %v", formatCommandAndArgs(firstExecRequestCommand.Command.GetName(),
@@ -133,7 +132,7 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResp
 		stderr = ptmx
 	} else {
 		// Start the command in its own process group so signals reach all descendants
-		cmd.SysProcAttr.Setpgid = true
+		configurePgidSysProcAttr(cmd)
 
 		if firstExecRequestCommand.Command.Interactive {
 			stdin, err = cmd.StdinPipe()
@@ -369,19 +368,6 @@ func (rpc *RPC) Exec(stream grpc.BidiStreamingServer[v1.ExecRequest, v1.ExecResp
 	})
 }
 
-func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
-	if err := syscall.Kill(-process.Pid, signal); err != nil {
-		// Translate a missing process group into the process-finished error expected by os/exec
-		if errors.Is(err, syscall.ESRCH) {
-			return os.ErrProcessDone
-		}
-
-		return err
-	}
-
-	return nil
-}
-
 func closeStdin(stdin io.WriteCloser, tty bool, closed *bool) error {
 	if stdin == nil || *closed {
 		return nil
@@ -462,18 +448,8 @@ func applyExecOverrides(cmd *exec.Cmd, command *v1.ExecRequest_Command) error {
 		cmd.Env = mergeEnv(command.Env)
 	}
 
-	if user := command.GetUser(); user != "" {
-		credential, err := execuser.Resolve(user)
-		if err != nil {
-			return fmt.Errorf("failed to apply user override %q: %w", user, err)
-		}
-
-		// Avoid changing credentials when the requested user is the guest agent user
-		if credential.Uid == uint32(os.Geteuid()) && credential.Gid == uint32(os.Getegid()) {
-			return nil
-		}
-
-		cmd.SysProcAttr.Credential = credential
+	if err := applyUserOverride(cmd, command.GetUser()); err != nil {
+		return err
 	}
 
 	return nil

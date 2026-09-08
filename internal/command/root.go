@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"syscall"
@@ -10,25 +11,32 @@ import (
 
 	"github.com/cenkalti/backoff/v5"
 	"github.com/cirruslabs/tart-guest-agent/internal/diskresizer"
+	"github.com/cirruslabs/tart-guest-agent/internal/doctor"
 	"github.com/cirruslabs/tart-guest-agent/internal/logginglevel"
 	"github.com/cirruslabs/tart-guest-agent/internal/rpc"
+	"github.com/cirruslabs/tart-guest-agent/internal/settings"
 	"github.com/cirruslabs/tart-guest-agent/internal/spice/vdagent"
 	"github.com/cirruslabs/tart-guest-agent/internal/tart"
+	"github.com/cirruslabs/tart-guest-agent/internal/tray"
+	"github.com/cirruslabs/tart-guest-agent/internal/ui"
 	"github.com/cirruslabs/tart-guest-agent/internal/version"
 	"github.com/cirruslabs/tart-guest-agent/internal/vsock"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sys/unix"
 )
 
 var resizeDisk bool
 var runVdagent bool
 var runRPC bool
+var runTray bool
 
 var runDaemon bool
 var runAgent bool
+var runDoctor bool
+var runNotifications bool
+var runSettings bool
 
 var debug bool
 
@@ -51,11 +59,63 @@ func NewRootCommand() *cobra.Command {
 		RunE: run,
 	}
 
+	// Doctor subcommand
+	var enableSelfTest bool
+	var enableNotify bool
+	doctorCmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run guest agent environment and capability diagnostics",
+		Run: func(_ *cobra.Command, _ []string) {
+			os.Exit(doctor.PrintDoctorReport(enableSelfTest, enableNotify))
+		},
+	}
+	doctorCmd.Flags().BoolVarP(&enableSelfTest, "self-test", "s", false, "run active read/write clipboard loopback self-test")
+	doctorCmd.Flags().BoolVarP(&enableNotify, "notify", "n", false, "send desktop notification with diagnostic results")
+	cmd.AddCommand(doctorCmd)
+
+	// Tray subcommand
+	trayCmd := &cobra.Command{
+		Use:   "tray [action]",
+		Short: "Run guest agent system tray / status bar service, or dispatch an action",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t := tray.New()
+			if len(args) > 0 {
+				return t.HandleAction(args[0])
+			}
+			return t.Run(cmd.Context())
+		},
+	}
+	cmd.AddCommand(trayCmd)
+
+	// Notifications panel subcommand
+	notificationsCmd := &cobra.Command{
+		Use:   "notifications",
+		Short: "Open guest agent notifications and recent activity panel",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return ui.ShowNotificationsPanel()
+		},
+	}
+	cmd.AddCommand(notificationsCmd)
+
+	// Settings dialog subcommand
+	settingsCmd := &cobra.Command{
+		Use:   "settings",
+		Short: "Open guest agent interactive settings and preferences dialog",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return ui.ShowSettingsDialog()
+		},
+	}
+	cmd.AddCommand(settingsCmd)
+
 	// Individual components
 	cmd.Flags().BoolVar(&resizeDisk, "resize-disk", false, "resize disk")
 	cmd.Flags().BoolVar(&runVdagent, "run-vdagent", false, "run vdagent")
 	cmd.Flags().BoolVar(&runRPC, "run-rpc", false, "run RPC service (currently required "+
 		"to support \"tart exec\" functionality)")
+	cmd.Flags().BoolVar(&runTray, "run-tray", false, "run system tray / status bar service")
+	cmd.Flags().BoolVar(&runDoctor, "doctor", false, "run guest agent environment and capability diagnostics")
+	cmd.Flags().BoolVar(&runNotifications, "notifications", false, "open recent notifications and activity panel")
+	cmd.Flags().BoolVar(&runSettings, "settings", false, "open settings and preferences dialog")
 
 	// Component groups
 	cmd.Flags().BoolVar(&runDaemon, "run-daemon", false, "identical to running the agent"+
@@ -69,9 +129,24 @@ func NewRootCommand() *cobra.Command {
 }
 
 func run(cmd *cobra.Command, args []string) error {
+	if runDoctor {
+		os.Exit(doctor.PrintDoctorReport(false, false))
+	}
+	if runNotifications {
+		return ui.ShowNotificationsPanel()
+	}
+	if runSettings {
+		return ui.ShowSettingsDialog()
+	}
 	// Component groups automatically enable certain individual components
 	if runDaemon {
-		resizeDisk = true
+		if cmd.Flags().Changed("resize-disk") {
+			// Explicit CLI flag takes precedence
+		} else if s := settings.Get(); s != nil {
+			resizeDisk = s.AutoResizeEnabled
+		} else {
+			resizeDisk = true
+		}
 	}
 
 	if runAgent {
@@ -79,12 +154,23 @@ func run(cmd *cobra.Command, args []string) error {
 		runRPC = true
 	}
 
+	if !resizeDisk && !runVdagent && !runRPC && !runTray {
+		if runDaemon {
+			zap.S().Infof("daemon: auto-resize is disabled and no other components are requested; exiting cleanly")
+			return nil
+		}
+		return fmt.Errorf("at least one component must be enabled")
+	}
+
 	// Terminate to prevent disk corruption on macOS guests
 	// with disk layouts other than provided by Tart
 	if runtime.GOOS == "darwin" {
 		version, ok := tart.Version()
 		if !ok {
-			return unix.Kill(os.Getppid(), syscall.SIGTERM)
+			if p, err := os.FindProcess(os.Getppid()); err == nil {
+				_ = p.Signal(syscall.SIGTERM)
+			}
+			return errors.New("failed to identify Tart version on macOS guest")
 		}
 
 		zap.S().Infof("running on Tart %s, proceeding...", version.String())
@@ -92,7 +178,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Perform disk resizing
 	if resizeDisk {
-		zap.S().Info("attempting to resize disk...")
+		zap.S().Infof("resizing the disk...")
 
 		if err := diskresizer.Resize(); err != nil {
 			if errors.Is(err, diskresizer.ErrUnsupported) || errors.Is(err, diskresizer.ErrAlreadyResized) {
@@ -143,6 +229,16 @@ func run(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	if runTray {
+		group.Go(func() error {
+			return tray.New().Run(ctx)
+		})
+	}
+
+	if runVdagent || runAgent {
+		tray.EmitStartupToast()
+	}
+
 	// When running in daemon or agent mode, wait indefinitely until terminated
 	if runDaemon || runAgent {
 		group.Go(func() error {
@@ -161,7 +257,9 @@ func runVdagentOnce(ctx context.Context) error {
 	vdAgent, err := vdagent.New()
 	if err != nil {
 		zap.S().Errorf("failed to initialize vdagent: %v", err)
-
+		if !runDaemon && !runAgent {
+			return err
+		}
 		return nil
 	}
 	defer vdAgent.Close()
@@ -169,8 +267,13 @@ func runVdagentOnce(ctx context.Context) error {
 	zap.S().Infof("running vdagent...")
 
 	if err := vdAgent.Run(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		zap.S().Errorf("failed to run vdagent: %v", err)
-
+		if !runDaemon && !runAgent {
+			return err
+		}
 		return nil
 	}
 

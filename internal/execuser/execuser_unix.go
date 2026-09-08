@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package execuser resolves user overrides for guest exec processes.
 package execuser
 
@@ -12,6 +14,7 @@ import (
 // Resolve parses a user override in user[:group] form.
 //
 // User and group components may be names or numeric IDs.
+//
 //nolint:nestif // looks good for now
 func Resolve(spec string) (*syscall.Credential, error) {
 	// Split the override into user and optional group
